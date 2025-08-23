@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-const socketPath = "/tmp/app.sock"
+const SocketPath = "/tmp/app.sock"
 
 type ClientEvent struct {
 	Command string   `json:"command"`
@@ -15,7 +15,8 @@ type ClientEvent struct {
 }
 
 type ServerEvent struct {
-	Success bool `json:"success"`
+	Success bool   `json:"success"`
+	Error   string `json:"error"`
 }
 
 type Event interface {
@@ -23,13 +24,13 @@ type Event interface {
 }
 
 func StartServer() (net.Listener, error) {
-	err := os.RemoveAll(socketPath)
+	err := os.RemoveAll(SocketPath)
 	if err != nil {
 		fmt.Println("Error removing old socket:", err)
 		os.Exit(1)
 	}
 
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := net.Listen("unix", SocketPath)
 	if err != nil {
 		fmt.Println("Listen error:", err)
 		os.Exit(1)

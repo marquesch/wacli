@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/marquesch/wasvc/internal/socket"
+	"github.com/marquesch/wasvc/internal/whatsapp"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/mdp/qrterminal/v3"
@@ -20,8 +21,6 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
 )
-
-const socketPath = "/tmp/app.sock"
 
 func whatsappConnect() (*whatsmeow.Client, error) {
 	dbLog := waLog.Stdout("Database", "ERROR", true)
@@ -80,11 +79,12 @@ func sendTextMessage(client *whatsmeow.Client, recipient string, text string) er
 }
 
 func main() {
-	waClient, err := whatsappConnect()
+	waClient, err := whatsapp.Connect()
 	if err != nil {
 		fmt.Println("Error connecting to whatsapp: ", err)
 		os.Exit(1)
 	}
+	// defer waClient.SendPresence(types.PresenceUnavailable)
 	defer waClient.Disconnect()
 
 	listener, err := socket.StartServer()
@@ -93,7 +93,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer listener.Close()
-	defer os.Remove(socketPath)
+	defer os.Remove(socket.SocketPath)
 
 	for {
 		conn, err := listener.Accept()
@@ -118,16 +118,26 @@ func handleClientEvent(conn net.Conn, waClient *whatsmeow.Client) error {
 
 	var response socket.ServerEvent
 
-	if clientEvent.Command == "send" {
-		recipient := clientEvent.Args[0]
+	switch clientEvent.Command {
+	case "send":
+		phoneNumber := clientEvent.Args[0]
 		body := clientEvent.Args[1]
 
 		response.Success = true
-
-		err = sendTextMessage(waClient, recipient, body)
+		err = whatsapp.SendTextMessage(waClient, phoneNumber, body)
 		if err != nil {
 			response.Success = false
+			response.Error = fmt.Sprintf("error sending text message: %s", err)
 		}
+	case "check":
+		phoneNumber := clientEvent.Args[0]
+
+		toJID := whatsapp.GetJID(phoneNumber)
+		contactExists, err := whatsapp.ContactExists(waClient, toJID)
+		if err != nil {
+			response.Error = fmt.Sprintf("error checking if contact exists: %s", err)
+		}
+		response.Success = contactExists
 	}
 
 	err = socket.WriteEvent(conn, response)

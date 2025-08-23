@@ -10,11 +10,34 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const socketPath = "/tmp/app.sock"
+func sendCommand(clientEvent socket.ClientEvent) (socket.ServerEvent, error) {
+	conn, err := net.Dial("unix", socket.SocketPath)
+	if err != nil {
+		fmt.Println("Dial error:", err)
+		os.Exit(1)
+	}
+	defer conn.Close()
+
+	err = socket.WriteEvent(conn, clientEvent)
+	if err != nil {
+		fmt.Println("write error: ", err)
+		os.Exit(1)
+	}
+
+	var response socket.ServerEvent
+
+	err = socket.ReadEvent(conn, &response)
+	if err != nil {
+		fmt.Println("read error: ", err)
+		os.Exit(1)
+	}
+
+	return response, nil
+}
 
 func main() {
-	var recipient string
-	var text string
+	var phoneNumber string
+	var body string
 
 	cmd := &cli.Command{
 		Name:  "wacli",
@@ -31,43 +54,58 @@ func main() {
 						Arguments: []cli.Argument{
 							&cli.StringArg{
 								Name:        "recipient",
-								Destination: &recipient,
+								Destination: &phoneNumber,
 							},
 							&cli.StringArg{
-								Name:        "text",
-								Destination: &text,
+								Name:        "body",
+								Destination: &body,
 							},
 						},
 						Action: func(ctx context.Context, cmd *cli.Command) error {
-							conn, err := net.Dial("unix", socketPath)
-							if err != nil {
-								fmt.Println("Dial error:", err)
-								os.Exit(1)
-							}
-							defer conn.Close()
-
 							message := socket.ClientEvent{
 								Command: "send",
-								Args:    []string{recipient, text},
+								Args:    []string{phoneNumber, body},
 							}
 
-							err = socket.WriteEvent(conn, message)
+							response, err := sendCommand(message)
 							if err != nil {
-								fmt.Println("write error: ", err)
-								os.Exit(1)
+								return fmt.Errorf("error sending action to server: %w", err)
 							}
 
-							var response socket.ServerEvent
-
-							err = socket.ReadEvent(conn, &response)
-							if err != nil {
-								fmt.Println("read error: ", err)
-								os.Exit(1)
+							if !response.Success {
+								fmt.Println(response.Error)
 							}
 
 							return nil
 						},
 					},
+				},
+			},
+			{
+				Name: "check",
+				Arguments: []cli.Argument{
+					&cli.StringArg{
+						Name:        "phoneNumber",
+						Destination: &phoneNumber,
+					},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					event := socket.ClientEvent{
+						Command: "check",
+						Args:    []string{phoneNumber},
+					}
+
+					response, err := sendCommand(event)
+					if err != nil {
+						return fmt.Errorf("error sending command: %w", err)
+					}
+
+					if response.Error != "" {
+						return fmt.Errorf("server error: %w", err)
+					}
+
+					fmt.Println(response.Success)
+					return nil
 				},
 			},
 		},
