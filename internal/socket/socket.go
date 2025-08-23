@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 )
+
+const socketPath = "/tmp/app.sock"
 
 type ClientEvent struct {
 	Command string   `json:"command"`
@@ -17,6 +20,22 @@ type ServerEvent struct {
 
 type Event interface {
 	ClientEvent | ServerEvent
+}
+
+func StartServer() (net.Listener, error) {
+	err := os.RemoveAll(socketPath)
+	if err != nil {
+		fmt.Println("Error removing old socket:", err)
+		os.Exit(1)
+	}
+
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		fmt.Println("Listen error:", err)
+		os.Exit(1)
+	}
+
+	return listener, nil
 }
 
 func ReadEvent[T Event](conn net.Conn, event *T) error {

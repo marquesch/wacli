@@ -85,17 +85,11 @@ func main() {
 		fmt.Println("Error connecting to whatsapp: ", err)
 		os.Exit(1)
 	}
-	fmt.Println("connected successfully")
 	defer waClient.Disconnect()
 
-	if err := os.RemoveAll(socketPath); err != nil {
-		fmt.Println("Error removing old socket:", err)
-		os.Exit(1)
-	}
-
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := socket.StartServer()
 	if err != nil {
-		fmt.Println("Listen error:", err)
+		fmt.Println("error starting server: ", err)
 		os.Exit(1)
 	}
 	defer listener.Close()
@@ -104,14 +98,14 @@ func main() {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println("Accept error:", err)
+			fmt.Println("error accepting connection: ", err)
 			continue
 		}
-		go handleConnection(conn, waClient)
+		go handleClientEvent(conn, waClient)
 	}
 }
 
-func handleConnection(conn net.Conn, waClient *whatsmeow.Client) error {
+func handleClientEvent(conn net.Conn, waClient *whatsmeow.Client) error {
 	defer conn.Close()
 
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -132,7 +126,6 @@ func handleConnection(conn net.Conn, waClient *whatsmeow.Client) error {
 
 		err = sendTextMessage(waClient, recipient, body)
 		if err != nil {
-			fmt.Println(err)
 			response.Success = false
 		}
 	}

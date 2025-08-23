@@ -39,7 +39,6 @@ func main() {
 							},
 						},
 						Action: func(ctx context.Context, cmd *cli.Command) error {
-
 							conn, err := net.Dial("unix", socketPath)
 							if err != nil {
 								fmt.Println("Dial error:", err)
@@ -65,8 +64,6 @@ func main() {
 								fmt.Println("read error: ", err)
 								os.Exit(1)
 							}
-
-							fmt.Printf("got succesful response: %t", response.Success)
 
 							return nil
 						},
