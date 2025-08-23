@@ -6,86 +6,13 @@ import (
 	"os"
 	"time"
 
-	"context"
-
 	"github.com/marquesch/wasvc/internal/socket"
 	"github.com/marquesch/wasvc/internal/whatsapp"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/mdp/qrterminal/v3"
-	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/proto/waE2E"
-	"go.mau.fi/whatsmeow/store/sqlstore"
-	"go.mau.fi/whatsmeow/types"
-
-	waLog "go.mau.fi/whatsmeow/util/log"
-	"google.golang.org/protobuf/proto"
 )
 
-func whatsappConnect() (*whatsmeow.Client, error) {
-	dbLog := waLog.Stdout("Database", "ERROR", true)
-
-	ctx := context.Background()
-	container, err := sqlstore.New(ctx, "sqlite3", "file:examplestore.db?_foreign_keys=on", dbLog)
-	if err != nil {
-		return nil, fmt.Errorf("error setting db: %w", err)
-	}
-
-	deviceStore, err := container.GetFirstDevice(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("error setting device: %w", err)
-	}
-
-	clientLog := waLog.Stdout("Client", "ERROR", true)
-	client := whatsmeow.NewClient(deviceStore, clientLog)
-
-	if client.Store.ID == nil {
-		qrChan, _ := client.GetQRChannel(context.Background())
-
-		err = client.Connect()
-		if err != nil {
-			return nil, fmt.Errorf("error connecting to client: %w", err)
-		}
-
-		for evt := range qrChan {
-			if evt.Event == "code" {
-				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-			}
-		}
-
-	} else {
-		err = client.Connect()
-		if err != nil {
-			return nil, fmt.Errorf("error connecting to client: %w", err)
-		}
-	}
-
-	return client, nil
-}
-
-func sendTextMessage(client *whatsmeow.Client, recipient string, text string) error {
-	toJID, _ := types.ParseJID(fmt.Sprintf("%s@s.whatsapp.net", recipient))
-
-	message := &waE2E.Message{
-		Conversation: proto.String(text),
-	}
-
-	_, err := client.SendMessage(context.Background(), toJID, message)
-	if err != nil {
-		return fmt.Errorf("error sending message: %w", err)
-	}
-
-	return nil
-}
-
 func main() {
-	waClient, err := whatsapp.Connect()
-	if err != nil {
-		fmt.Println("Error connecting to whatsapp: ", err)
-		os.Exit(1)
-	}
-	defer waClient.Disconnect()
-
 	listener, err := socket.StartServer()
 	if err != nil {
 		fmt.Println("error starting server: ", err)
@@ -94,17 +21,62 @@ func main() {
 	defer listener.Close()
 	defer os.Remove(socket.SocketPath)
 
+	successChan := make(chan bool)
+	connChan := make(chan net.Conn)
+
+	go whatsapp.Connect(successChan)
+	go listen(connChan, listener)
+
+	var retries int
+	var done bool
+
+	for !done {
+		select {
+		case success := <-successChan:
+			if !success {
+				if retries < 3 {
+					fmt.Println("error connecting to whatsapp. retrying")
+					whatsapp.Connect(successChan)
+					retries++
+				} else {
+					fmt.Println(("could not connect to whatsapp after 3 tries. shutting down"))
+					os.Exit(1)
+				}
+			} else {
+				done = true
+			}
+		case conn := <-connChan:
+			response := socket.ServerEvent{
+				Success: false,
+				Message: "whatsapp client is still connecting",
+			}
+			err := socket.WriteEvent(conn, response)
+			if err != nil {
+				fmt.Println("error writing event: ", err)
+			}
+		}
+	}
+	defer whatsapp.WAClient.Disconnect()
+
+	for {
+		conn := <-connChan
+		go handleClientEvent(conn)
+	}
+
+}
+
+func listen(connChan chan net.Conn, listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			fmt.Println("error accepting connection: ", err)
 			continue
 		}
-		go handleClientEvent(conn, waClient)
+		connChan <- conn
 	}
 }
 
-func handleClientEvent(conn net.Conn, waClient *whatsmeow.Client) error {
+func handleClientEvent(conn net.Conn) error {
 	defer conn.Close()
 
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -123,7 +95,7 @@ func handleClientEvent(conn net.Conn, waClient *whatsmeow.Client) error {
 		body := clientEvent.Args[1]
 
 		responseEvent.Success = true
-		err = whatsapp.SendTextMessage(waClient, phoneNumber, body)
+		err = whatsapp.SendTextMessage(phoneNumber, body)
 		if err != nil {
 			responseEvent.Success = false
 			responseEvent.Message = fmt.Sprintf("error sending text message: %s", err)
@@ -132,7 +104,7 @@ func handleClientEvent(conn net.Conn, waClient *whatsmeow.Client) error {
 		phoneNumber := clientEvent.Args[0]
 
 		toJID := whatsapp.GetJID(phoneNumber)
-		contactExists, err := whatsapp.ContactExists(waClient, toJID)
+		contactExists, err := whatsapp.ContactExists(toJID)
 		responseEvent.Success = true
 		responseEvent.Message = fmt.Sprintf("%t", contactExists)
 		if err != nil {
