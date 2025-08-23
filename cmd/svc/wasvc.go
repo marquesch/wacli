@@ -84,7 +84,6 @@ func main() {
 		fmt.Println("Error connecting to whatsapp: ", err)
 		os.Exit(1)
 	}
-	// defer waClient.SendPresence(types.PresenceUnavailable)
 	defer waClient.Disconnect()
 
 	listener, err := socket.StartServer()
@@ -116,31 +115,33 @@ func handleClientEvent(conn net.Conn, waClient *whatsmeow.Client) error {
 		return fmt.Errorf("error reading message: %w", err)
 	}
 
-	var response socket.ServerEvent
+	var responseEvent socket.ServerEvent
 
 	switch clientEvent.Command {
 	case "send":
 		phoneNumber := clientEvent.Args[0]
 		body := clientEvent.Args[1]
 
-		response.Success = true
+		responseEvent.Success = true
 		err = whatsapp.SendTextMessage(waClient, phoneNumber, body)
 		if err != nil {
-			response.Success = false
-			response.Error = fmt.Sprintf("error sending text message: %s", err)
+			responseEvent.Success = false
+			responseEvent.Message = fmt.Sprintf("error sending text message: %s", err)
 		}
 	case "check":
 		phoneNumber := clientEvent.Args[0]
 
 		toJID := whatsapp.GetJID(phoneNumber)
 		contactExists, err := whatsapp.ContactExists(waClient, toJID)
+		responseEvent.Success = true
+		responseEvent.Message = fmt.Sprintf("%t", contactExists)
 		if err != nil {
-			response.Error = fmt.Sprintf("error checking if contact exists: %s", err)
+			responseEvent.Success = false
+			responseEvent.Message = fmt.Sprintf("error checking if contact exists: %s", err)
 		}
-		response.Success = contactExists
 	}
 
-	err = socket.WriteEvent(conn, response)
+	err = socket.WriteEvent(conn, responseEvent)
 	if err != nil {
 		return fmt.Errorf("error writing message: %w", err)
 	}

@@ -10,7 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func sendCommand(clientEvent socket.ClientEvent) (socket.ServerEvent, error) {
+func sendCommandToServer(clientEvent socket.ClientEvent) (socket.ServerEvent, error) {
 	conn, err := net.Dial("unix", socket.SocketPath)
 	if err != nil {
 		fmt.Println("Dial error:", err)
@@ -62,18 +62,18 @@ func main() {
 							},
 						},
 						Action: func(ctx context.Context, cmd *cli.Command) error {
-							message := socket.ClientEvent{
+							event := socket.ClientEvent{
 								Command: "send",
 								Args:    []string{phoneNumber, body},
 							}
 
-							response, err := sendCommand(message)
+							response, err := sendCommandToServer(event)
 							if err != nil {
-								return fmt.Errorf("error sending action to server: %w", err)
+								return fmt.Errorf("error sending command to server: %w", err)
 							}
 
 							if !response.Success {
-								fmt.Println(response.Error)
+								fmt.Println(response.Message)
 							}
 
 							return nil
@@ -95,16 +95,16 @@ func main() {
 						Args:    []string{phoneNumber},
 					}
 
-					response, err := sendCommand(event)
+					response, err := sendCommandToServer(event)
 					if err != nil {
-						return fmt.Errorf("error sending command: %w", err)
+						return fmt.Errorf("error sending command to server: %w", err)
 					}
 
-					if response.Error != "" {
-						return fmt.Errorf("server error: %w", err)
+					if !response.Success {
+						return fmt.Errorf("server error: %s", response.Message)
 					}
 
-					fmt.Println(response.Success)
+					fmt.Println(response.Message)
 					return nil
 				},
 			},

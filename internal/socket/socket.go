@@ -16,7 +16,7 @@ type ClientEvent struct {
 
 type ServerEvent struct {
 	Success bool   `json:"success"`
-	Error   string `json:"error"`
+	Message string `json:"response"`
 }
 
 type Event interface {
