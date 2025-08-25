@@ -15,29 +15,31 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func Connect() (*whatsmeow.Client, error) {
+var WAClient *whatsmeow.Client
+
+func Connect(successChan chan bool) {
 	dbLog := waLog.Stdout("Database", "ERROR", true)
 
 	ctx := context.Background()
 	container, err := sqlstore.New(ctx, "sqlite3", "file:examplestore.db?_foreign_keys=on", dbLog)
 	if err != nil {
-		return nil, fmt.Errorf("error setting db: %w", err)
+		successChan <- false
 	}
 
 	deviceStore, err := container.GetFirstDevice(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error setting device: %w", err)
+		successChan <- false
 	}
 
 	clientLog := waLog.Stdout("Client", "ERROR", true)
-	client := whatsmeow.NewClient(deviceStore, clientLog)
+	WAClient = whatsmeow.NewClient(deviceStore, clientLog)
 
-	if client.Store.ID == nil {
-		qrChan, _ := client.GetQRChannel(context.Background())
+	if WAClient.Store.ID == nil {
+		qrChan, _ := WAClient.GetQRChannel(context.Background())
 
-		err = client.Connect()
+		err = WAClient.Connect()
 		if err != nil {
-			return nil, fmt.Errorf("error connecting to client: %w", err)
+			successChan <- false
 		}
 
 		for evt := range qrChan {
@@ -47,18 +49,18 @@ func Connect() (*whatsmeow.Client, error) {
 		}
 
 	} else {
-		err = client.Connect()
+		err = WAClient.Connect()
 		if err != nil {
-			return nil, fmt.Errorf("error connecting to client: %w", err)
+			successChan <- false
 		}
 	}
-	client.SendPresence(types.PresenceAvailable)
+	WAClient.SendPresence(types.PresenceAvailable)
 
-	return client, nil
+	successChan <- true
 }
 
-func ContactExists(client *whatsmeow.Client, jid types.JID) (bool, error) {
-	usersInfo, err := client.GetUserInfo([]types.JID{jid})
+func ContactExists(jid types.JID) (bool, error) {
+	usersInfo, err := WAClient.GetUserInfo([]types.JID{jid})
 	if err != nil {
 		return false, err
 	}
@@ -73,10 +75,10 @@ func GetJID(phoneNumber string) types.JID {
 	return toJID
 }
 
-func SendTextMessage(client *whatsmeow.Client, phoneNumber string, text string) error {
+func SendTextMessage(phoneNumber string, text string) error {
 	toJID := GetJID(phoneNumber)
 
-	contactExists, err := ContactExists(client, toJID)
+	contactExists, err := ContactExists(toJID)
 	if err != nil {
 		return fmt.Errorf("error checking contact existence: %w", err)
 	}
@@ -89,7 +91,7 @@ func SendTextMessage(client *whatsmeow.Client, phoneNumber string, text string) 
 		Conversation: proto.String(text),
 	}
 
-	_, err = client.SendMessage(context.Background(), toJID, message)
+	_, err = WAClient.SendMessage(context.Background(), toJID, message)
 	if err != nil {
 		return fmt.Errorf("error sending message: %w", err)
 	}
