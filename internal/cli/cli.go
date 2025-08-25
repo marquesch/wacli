@@ -32,3 +32,18 @@ func SendCommand(command socket.ClientCommand) (socket.ServerResponse, error) {
 
 	return response, nil
 }
+
+func SendCommandNoWait(command socket.ClientCommand) error {
+	conn, err := net.Dial("unix", socket.SocketPath)
+	if err != nil {
+		return fmt.Errorf("dial error: %w", err)
+	}
+	defer conn.Close()
+
+	err = socket.WriteEvent(conn, command)
+	if err != nil {
+		return fmt.Errorf("write error: %w", err)
+	}
+
+	return nil
+}
