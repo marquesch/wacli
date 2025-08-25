@@ -13,6 +13,7 @@ import (
 func main() {
 	var phoneNumber string
 	var body string
+	var noWait bool
 
 	cmd := &cli.Command{
 		Name:  "wacli",
@@ -22,10 +23,10 @@ func main() {
 		},
 		Commands: []*cli.Command{
 			{
-				Name: "send",
+				Name:  "send",
 				Commands: []*cli.Command{
 					{
-						Name: "text",
+						Name:  "text",
 						Arguments: []cli.Argument{
 							&cli.StringArg{
 								Name:        "recipient",
@@ -36,6 +37,13 @@ func main() {
 								Destination: &body,
 							},
 						},
+						Flags: []cli.Flag{
+							&cli.BoolFlag{
+								Name:        "no-wait",
+								Usage:       "Send message and exit immediately without waiting for server response",
+								Destination: &noWait,
+							},
+						},
 						Action: func(ctx context.Context, cmd *cli.Command) error {
 							command := socket.ClientCommand{
 								Command:    "send",
@@ -43,13 +51,20 @@ func main() {
 								Args:       []string{phoneNumber, body},
 							}
 
-							response, err := wacli.SendCommand(command)
-							if err != nil {
-								return fmt.Errorf("error sending command to server: %w", err)
-							}
+							if noWait {
+								err := wacli.SendCommandNoWait(command)
+								if err != nil {
+									return fmt.Errorf("error sending command to server: %w", err)
+								}
+							} else {
+								response, err := wacli.SendCommand(command)
+								if err != nil {
+									return fmt.Errorf("error sending command to server: %w", err)
+								}
 
-							if !response.Success {
-								fmt.Println(response.Message)
+								if !response.Success {
+									fmt.Println(response.Message)
+								}
 							}
 
 							return nil
@@ -58,7 +73,7 @@ func main() {
 				},
 			},
 			{
-				Name: "check",
+				Name:  "check",
 				Arguments: []cli.Argument{
 					&cli.StringArg{
 						Name:        "phoneNumber",
