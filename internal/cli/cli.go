@@ -8,7 +8,7 @@ import (
 	"github.com/marquesch/wasvc/internal/socket"
 )
 
-func SendCommand(clientEvent socket.ClientEvent) (socket.ServerEvent, error) {
+func SendCommand(command socket.ClientCommand) (socket.ServerResponse, error) {
 	conn, err := net.Dial("unix", socket.SocketPath)
 	if err != nil {
 		fmt.Println("Dial error:", err)
@@ -16,13 +16,13 @@ func SendCommand(clientEvent socket.ClientEvent) (socket.ServerEvent, error) {
 	}
 	defer conn.Close()
 
-	err = socket.WriteEvent(conn, clientEvent)
+	err = socket.WriteEvent(conn, command)
 	if err != nil {
 		fmt.Println("write error: ", err)
 		os.Exit(1)
 	}
 
-	var response socket.ServerEvent
+	var response socket.ServerResponse
 
 	err = socket.ReadEvent(conn, &response)
 	if err != nil {

@@ -37,12 +37,13 @@ func main() {
 							},
 						},
 						Action: func(ctx context.Context, cmd *cli.Command) error {
-							event := socket.ClientEvent{
-								Command: "send",
-								Args:    []string{phoneNumber, body},
+							command := socket.ClientCommand{
+								Command:    "send",
+								Subcommand: "text",
+								Args:       []string{phoneNumber, body},
 							}
 
-							response, err := wacli.SendCommand(event)
+							response, err := wacli.SendCommand(command)
 							if err != nil {
 								return fmt.Errorf("error sending command to server: %w", err)
 							}
@@ -65,12 +66,12 @@ func main() {
 					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					event := socket.ClientEvent{
+					command := socket.ClientCommand{
 						Command: "check",
 						Args:    []string{phoneNumber},
 					}
 
-					response, err := wacli.SendCommand(event)
+					response, err := wacli.SendCommand(command)
 					if err != nil {
 						return fmt.Errorf("error sending command to server: %w", err)
 					}

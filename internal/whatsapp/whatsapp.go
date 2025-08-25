@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
@@ -15,13 +16,31 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var WAClient *whatsmeow.Client
+var (
+	databasePath string
+	WAClient     *whatsmeow.Client
+)
+
+func init() {
+	userHomeDir, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	databasePath = filepath.Join(userHomeDir, ".local", "lib", "wacli", "sqlite.db")
+	dbDir := filepath.Dir(databasePath)
+
+	err = os.MkdirAll(dbDir, 0755)
+	if err != nil {
+		panic(err)
+	}
+}
 
 func Connect(successChan chan bool) {
 	dbLog := waLog.Stdout("Database", "ERROR", true)
 
 	ctx := context.Background()
-	container, err := sqlstore.New(ctx, "sqlite3", "file:examplestore.db?_foreign_keys=on", dbLog)
+	container, err := sqlstore.New(ctx, "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", databasePath), dbLog)
 	if err != nil {
 		successChan <- false
 	}

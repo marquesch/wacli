@@ -9,18 +9,19 @@ import (
 
 const SocketPath = "/tmp/app.sock"
 
-type ClientEvent struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
+type ClientCommand struct {
+	Command    string   `json:"command"`
+	Subcommand string   `json:"subcommand"`
+	Args       []string `json:"args"`
 }
 
-type ServerEvent struct {
+type ServerResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"response"`
 }
 
 type Event interface {
-	ClientEvent | ServerEvent
+	ClientCommand | ServerResponse
 }
 
 func Listen(connChan chan net.Conn, listener net.Listener) {

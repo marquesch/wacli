@@ -46,13 +46,13 @@ func main() {
 				done = true
 			}
 		case conn := <-connChan:
-			response := socket.ServerEvent{
+			response := socket.ServerResponse{
 				Success: false,
 				Message: "whatsapp client is still connecting",
 			}
 			err := socket.WriteEvent(conn, response)
 			if err != nil {
-				fmt.Println("error writing event: ", err)
+				fmt.Println("error response event: ", err)
 			}
 		}
 	}
