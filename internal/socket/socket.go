@@ -23,6 +23,17 @@ type Event interface {
 	ClientEvent | ServerEvent
 }
 
+func Listen(connChan chan net.Conn, listener net.Listener) {
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Println("error accepting connection: ", err)
+			continue
+		}
+		connChan <- conn
+	}
+}
+
 func StartServer() (net.Listener, error) {
 	err := os.RemoveAll(SocketPath)
 	if err != nil {
