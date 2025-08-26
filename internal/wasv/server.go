@@ -59,7 +59,17 @@ func sendMessage(messageType string, args []string) error {
 		if err != nil {
 			return fmt.Errorf("error sending text message: %w", err)
 		}
+	case "image":
+		phoneNumber := args[0]
+		filePath := args[1]
+		caption := args[2]
+
+		err := whatsapp.SendImageMessage(phoneNumber, filePath, caption)
+		if err != nil {
+			return fmt.Errorf("error sending image message: %w", err)
+		}
 	}
+
 	return nil
 }
 

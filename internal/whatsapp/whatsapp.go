@@ -12,6 +12,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
 )
@@ -116,4 +117,56 @@ func SendTextMessage(phoneNumber string, text string) error {
 	}
 
 	return nil
+}
+
+func SendImageMessage(phoneNumber string, filePath string, caption string) error {
+	toJID := GetJID(phoneNumber)
+
+	contactExists, err := ContactExists(toJID)
+	if err != nil {
+		return fmt.Errorf("error checking contact existence: %w", err)
+	}
+
+	if !contactExists {
+		return errors.New("contact does not exist")
+	}
+
+	fileBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed opening file: %w", err)
+	}
+
+	uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaImage)
+	if err != nil {
+		return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+	}
+
+	message := waE2E.Message{
+		ImageMessage: &waE2E.ImageMessage{
+			URL:           &uploadResponse.URL,
+			Caption:       &caption,
+			MediaKey:      uploadResponse.MediaKey,
+			FileSHA256:    uploadResponse.FileSHA256,
+			FileEncSHA256: uploadResponse.FileEncSHA256,
+		},
+	}
+
+	_, err = WAClient.SendMessage(context.Background(), toJID, &message)
+	if err != nil {
+		return fmt.Errorf("error sending message: %w", err)
+	}
+
+	return nil
+}
+
+func ListenEvents() (chan any, error) {
+	eventsChannel := make(chan any)
+	WAClient.AddEventHandler(func(evt any) {
+		switch evt.(type) {
+		case *events.Message:
+			eventsChannel <- evt
+		}
+	})
+
+	return eventsChannel, nil
 }
