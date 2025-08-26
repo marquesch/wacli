@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
@@ -20,6 +22,10 @@ import (
 var (
 	databasePath string
 	WAClient     *whatsmeow.Client
+
+	imageMimeTypeRegex = regexp.MustCompile("image/.*")
+	videoMimeTypeRegex = regexp.MustCompile("video/.*")
+	audioMimeTypeRegex = regexp.MustCompile("audio/.*")
 )
 
 func init() {
@@ -119,7 +125,7 @@ func SendTextMessage(phoneNumber string, text string) error {
 	return nil
 }
 
-func SendImageMessage(phoneNumber string, filePath string, caption string) error {
+func SendMediaMessage(phoneNumber string, filePath string, caption string) error {
 	toJID := GetJID(phoneNumber)
 
 	contactExists, err := ContactExists(toJID)
@@ -141,14 +147,31 @@ func SendImageMessage(phoneNumber string, filePath string, caption string) error
 		return fmt.Errorf("error uploading image to whatsapp servers %w", err)
 	}
 
-	message := waE2E.Message{
-		ImageMessage: &waE2E.ImageMessage{
+	mimeType := http.DetectContentType(fileBytes)
+
+	var message waE2E.Message
+
+	switch {
+	case imageMimeTypeRegex.MatchString(mimeType):
+		message.ImageMessage = &waE2E.ImageMessage{
 			URL:           &uploadResponse.URL,
-			Caption:       &caption,
+			DirectPath:    &uploadResponse.DirectPath,
 			MediaKey:      uploadResponse.MediaKey,
+			Mimetype:      &mimeType,
 			FileSHA256:    uploadResponse.FileSHA256,
 			FileEncSHA256: uploadResponse.FileEncSHA256,
-		},
+			FileLength:    proto.Uint64(uint64(len(fileBytes))),
+			Caption:       &caption,
+		}
+
+	case videoMimeTypeRegex.MatchString(mimeType):
+		return errors.New("video still not implemented")
+
+	case audioMimeTypeRegex.MatchString(mimeType):
+		return errors.New("audio still not implemented")
+
+	default:
+		return errors.New("doc still not implemented")
 	}
 
 	_, err = WAClient.SendMessage(context.Background(), toJID, &message)

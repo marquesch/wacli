@@ -58,7 +58,7 @@ func main() {
 						},
 					},
 					{
-						Name: "image",
+						Name: "media",
 						Arguments: []cli.Argument{
 							&cli.StringArg{
 								Name:        "phone-number",
@@ -78,7 +78,7 @@ func main() {
 						Action: func(ctx context.Context, cmd *cli.Command) error {
 							command := socket.ClientCommand{
 								Command:    "send",
-								Subcommand: "image",
+								Subcommand: "media",
 								Args:       []string{phoneNumber, filePath, caption},
 							}
 

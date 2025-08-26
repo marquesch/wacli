@@ -67,7 +67,7 @@ func main() {
 		case conn := <-connChan:
 			go wasv.HandleConnection(conn)
 		case evt := <-eventsChann:
-			fmt.Println(evt)
+			fmt.Printf("%#v\n", evt)
 		}
 	}
 }
