@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
 )
@@ -19,6 +22,10 @@ import (
 var (
 	databasePath string
 	WAClient     *whatsmeow.Client
+
+	imageMimeTypeRegex = regexp.MustCompile("image/.*")
+	videoMimeTypeRegex = regexp.MustCompile("video/.*")
+	audioMimeTypeRegex = regexp.MustCompile("audio/.*")
 )
 
 func init() {
@@ -79,6 +86,7 @@ func Connect(successChan chan bool) {
 }
 
 func ContactExists(jid types.JID) (bool, error) {
+	// #TODO: persist contacts to prevent checking on whatsapp every time
 	usersInfo, err := WAClient.GetUserInfo([]types.JID{jid})
 	if err != nil {
 		return false, err
@@ -116,4 +124,115 @@ func SendTextMessage(phoneNumber string, text string) error {
 	}
 
 	return nil
+}
+
+func SendMediaMessage(phoneNumber string, filePath string, caption string) error {
+	toJID := GetJID(phoneNumber)
+
+	contactExists, err := ContactExists(toJID)
+	if err != nil {
+		return fmt.Errorf("error checking contact existence: %w", err)
+	}
+
+	if !contactExists {
+		return errors.New("contact does not exist")
+	}
+
+	fileBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed opening file: %w", err)
+	}
+
+	mimeType := http.DetectContentType(fileBytes)
+
+	var message waE2E.Message
+
+	switch {
+	case imageMimeTypeRegex.MatchString(mimeType):
+		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaImage)
+		if err != nil {
+			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+		}
+
+		// #TODO: set thumbnail to prevent no image showing before downloading on whatsapp
+		message.ImageMessage = &waE2E.ImageMessage{
+			URL:           &uploadResponse.URL,
+			DirectPath:    &uploadResponse.DirectPath,
+			MediaKey:      uploadResponse.MediaKey,
+			Mimetype:      &mimeType,
+			FileSHA256:    uploadResponse.FileSHA256,
+			FileEncSHA256: uploadResponse.FileEncSHA256,
+			FileLength:    proto.Uint64(uint64(len(fileBytes))),
+			Caption:       &caption,
+		}
+
+	case videoMimeTypeRegex.MatchString(mimeType):
+		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaVideo)
+		if err != nil {
+			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+		}
+
+		// #TODO: set thumbnail to prevent no image showing before downloading on whatsapp
+		message.VideoMessage = &waE2E.VideoMessage{
+			URL:           &uploadResponse.URL,
+			DirectPath:    &uploadResponse.DirectPath,
+			MediaKey:      uploadResponse.MediaKey,
+			Mimetype:      &mimeType,
+			FileSHA256:    uploadResponse.FileSHA256,
+			FileEncSHA256: uploadResponse.FileEncSHA256,
+			FileLength:    proto.Uint64(uint64(len(fileBytes))),
+			Caption:       &caption,
+		}
+
+	case audioMimeTypeRegex.MatchString(mimeType):
+		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaAudio)
+		if err != nil {
+			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+		}
+
+		message.AudioMessage = &waE2E.AudioMessage{
+			URL:           &uploadResponse.URL,
+			DirectPath:    &uploadResponse.DirectPath,
+			MediaKey:      uploadResponse.MediaKey,
+			Mimetype:      &mimeType,
+			FileSHA256:    uploadResponse.FileSHA256,
+			FileEncSHA256: uploadResponse.FileEncSHA256,
+			FileLength:    proto.Uint64(uint64(len(fileBytes))),
+		}
+
+	default:
+		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaDocument)
+		if err != nil {
+			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+		}
+
+		message.DocumentMessage = &waE2E.DocumentMessage{
+			URL:           &uploadResponse.URL,
+			DirectPath:    &uploadResponse.DirectPath,
+			MediaKey:      uploadResponse.MediaKey,
+			Mimetype:      &mimeType,
+			FileSHA256:    uploadResponse.FileSHA256,
+			FileEncSHA256: uploadResponse.FileEncSHA256,
+			FileLength:    proto.Uint64(uint64(len(fileBytes))),
+		}
+	}
+
+	_, err = WAClient.SendMessage(context.Background(), toJID, &message)
+	if err != nil {
+		return fmt.Errorf("error sending message: %w", err)
+	}
+
+	return nil
+}
+
+func ListenEvents() (chan any, error) {
+	eventsChannel := make(chan any)
+	WAClient.AddEventHandler(func(evt any) {
+		switch evt.(type) {
+		case *events.Message:
+			eventsChannel <- evt
+		}
+	})
+
+	return eventsChannel, nil
 }

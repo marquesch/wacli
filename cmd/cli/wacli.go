@@ -13,6 +13,8 @@ import (
 func main() {
 	var phoneNumber string
 	var body string
+	var filePath string
+	var caption string
 
 	cmd := &cli.Command{
 		Name:  "wacli",
@@ -52,6 +54,42 @@ func main() {
 								fmt.Println(response.Message)
 							}
 
+							return nil
+						},
+					},
+					{
+						Name: "media",
+						Arguments: []cli.Argument{
+							&cli.StringArg{
+								Name:        "phone-number",
+								Destination: &phoneNumber,
+							},
+							&cli.StringArg{
+								Name:        "file-path",
+								Destination: &filePath,
+							},
+						},
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:        "caption",
+								Destination: &caption,
+							},
+						},
+						Action: func(ctx context.Context, cmd *cli.Command) error {
+							command := socket.ClientCommand{
+								Command:    "send",
+								Subcommand: "media",
+								Args:       []string{phoneNumber, filePath, caption},
+							}
+
+							response, err := wacli.SendCommand(command)
+							if err != nil {
+								return fmt.Errorf("error sending command to server: %w", err)
+							}
+
+							if !response.Success {
+								fmt.Println(response.Message)
+							}
 							return nil
 						},
 					},
