@@ -86,6 +86,7 @@ func Connect(successChan chan bool) {
 }
 
 func ContactExists(jid types.JID) (bool, error) {
+	// #TODO: persist contacts to prevent checking on whatsapp every time
 	usersInfo, err := WAClient.GetUserInfo([]types.JID{jid})
 	if err != nil {
 		return false, err
@@ -142,17 +143,18 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		return fmt.Errorf("failed opening file: %w", err)
 	}
 
-	uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaImage)
-	if err != nil {
-		return fmt.Errorf("error uploading image to whatsapp servers %w", err)
-	}
-
 	mimeType := http.DetectContentType(fileBytes)
 
 	var message waE2E.Message
 
 	switch {
 	case imageMimeTypeRegex.MatchString(mimeType):
+		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaImage)
+		if err != nil {
+			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+		}
+
+		// #TODO: set thumbnail to prevent no image showing before downloading on whatsapp
 		message.ImageMessage = &waE2E.ImageMessage{
 			URL:           &uploadResponse.URL,
 			DirectPath:    &uploadResponse.DirectPath,
@@ -165,13 +167,54 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		}
 
 	case videoMimeTypeRegex.MatchString(mimeType):
-		return errors.New("video still not implemented")
+		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaVideo)
+		if err != nil {
+			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+		}
+
+		// #TODO: set thumbnail to prevent no image showing before downloading on whatsapp
+		message.VideoMessage = &waE2E.VideoMessage{
+			URL:           &uploadResponse.URL,
+			DirectPath:    &uploadResponse.DirectPath,
+			MediaKey:      uploadResponse.MediaKey,
+			Mimetype:      &mimeType,
+			FileSHA256:    uploadResponse.FileSHA256,
+			FileEncSHA256: uploadResponse.FileEncSHA256,
+			FileLength:    proto.Uint64(uint64(len(fileBytes))),
+			Caption:       &caption,
+		}
 
 	case audioMimeTypeRegex.MatchString(mimeType):
-		return errors.New("audio still not implemented")
+		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaAudio)
+		if err != nil {
+			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+		}
+
+		message.AudioMessage = &waE2E.AudioMessage{
+			URL:           &uploadResponse.URL,
+			DirectPath:    &uploadResponse.DirectPath,
+			MediaKey:      uploadResponse.MediaKey,
+			Mimetype:      &mimeType,
+			FileSHA256:    uploadResponse.FileSHA256,
+			FileEncSHA256: uploadResponse.FileEncSHA256,
+			FileLength:    proto.Uint64(uint64(len(fileBytes))),
+		}
 
 	default:
-		return errors.New("doc still not implemented")
+		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaDocument)
+		if err != nil {
+			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+		}
+
+		message.DocumentMessage = &waE2E.DocumentMessage{
+			URL:           &uploadResponse.URL,
+			DirectPath:    &uploadResponse.DirectPath,
+			MediaKey:      uploadResponse.MediaKey,
+			Mimetype:      &mimeType,
+			FileSHA256:    uploadResponse.FileSHA256,
+			FileEncSHA256: uploadResponse.FileEncSHA256,
+			FileLength:    proto.Uint64(uint64(len(fileBytes))),
+		}
 	}
 
 	_, err = WAClient.SendMessage(context.Background(), toJID, &message)

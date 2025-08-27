@@ -57,7 +57,7 @@ func main() {
 		}
 	}
 	defer whatsapp.WAClient.Disconnect()
-	eventsChann, err := whatsapp.ListenEvents()
+
 	if err != nil {
 		fmt.Println("error listening to events: ", err)
 	}
@@ -66,8 +66,6 @@ func main() {
 		select {
 		case conn := <-connChan:
 			go wasv.HandleConnection(conn)
-		case evt := <-eventsChann:
-			fmt.Printf("%#v\n", evt)
 		}
 	}
 }
