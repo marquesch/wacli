@@ -62,10 +62,14 @@ func main() {
 		fmt.Println("error listening to events: ", err)
 	}
 
+	messageChann, _ := whatsapp.GetMessages(true)
+
 	for {
 		select {
 		case conn := <-connChan:
 			go wasv.HandleConnection(conn)
+		case msg := <-messageChann:
+			fmt.Fprintln(os.Stdout, msg)
 		}
 	}
 }

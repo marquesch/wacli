@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
@@ -17,6 +18,11 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
+)
+
+const (
+	colorGreen = "\\[\\033[0;32m\\]"
+	colorBlue  = "\\[\\033[0;34m\\]"
 )
 
 var (
@@ -235,4 +241,40 @@ func ListenEvents() (chan any, error) {
 	})
 
 	return eventsChannel, nil
+}
+
+func GetMessages(showTime bool) (chan string, error) {
+	messageChann := make(chan string)
+
+	eventChann, err := ListenEvents()
+	if err != nil {
+		return messageChann, fmt.Errorf("error creating event channel: %w", err)
+	}
+
+	go func() {
+		for {
+			event := <-eventChann
+			if msg, isMsg := event.(*events.Message); isMsg {
+				var formattedMessage string
+				if msg.Info.Type == "text" {
+					if showTime {
+						formattedMessage += fmt.Sprintf("[%s] ", msg.Info.Timestamp.Local().Format(time.TimeOnly))
+					}
+
+					formattedMessage += msg.Message.GetConversation()
+
+					color := colorBlue
+					if msg.Info.IsFromMe {
+						color = colorGreen
+					}
+
+					formattedMessage = fmt.Sprintf("%s %s", color, formattedMessage)
+
+					messageChann <- formattedMessage
+				}
+			}
+		}
+	}()
+
+	return messageChann, nil
 }
