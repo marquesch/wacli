@@ -1,9 +1,9 @@
 package wasv
 
 import (
+	"context"
 	"fmt"
 	"net"
-	"time"
 
 	"github.com/marquesch/wasvc/internal/socket"
 	"github.com/marquesch/wasvc/internal/whatsapp"
@@ -11,8 +11,6 @@ import (
 
 func HandleConnection(conn net.Conn) error {
 	defer conn.Close()
-
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 
 	var clientCommand socket.ClientCommand
 	err := socket.ReadEvent(conn, &clientCommand)
@@ -38,6 +36,25 @@ func HandleConnection(conn net.Conn) error {
 		if err != nil {
 			response.Success = false
 			response.Message = fmt.Sprintf("error checking if contact exists: %s", err)
+		}
+	case "get":
+		phoneNumber := clientCommand.Args[0]
+		ctx, cancel := context.WithCancel(context.Background())
+		whatsapp.GetMessages(ctx, conn, phoneNumber)
+
+		response.Success = true
+		err = socket.WriteEvent(conn, response)
+
+		for {
+			err = socket.ReadEvent(conn, &clientCommand)
+			if err != nil {
+				return fmt.Errorf("error reading event from client: %w", err)
+			}
+
+			if clientCommand.Command == "cancel" {
+				cancel()
+				return nil
+			}
 		}
 	}
 

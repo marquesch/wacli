@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 )
 
 const SocketPath = "/tmp/app.sock"
@@ -20,8 +21,16 @@ type ServerResponse struct {
 	Message string `json:"response"`
 }
 
+type MessageReceivedEvent struct {
+	IsFromMe  bool      `json:"from_me"`
+	Type      string    `json:"type"`
+	MediaType string    `json:"media_type"`
+	Body      string    `json:"body"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 type Event interface {
-	ClientCommand | ServerResponse
+	ClientCommand | ServerResponse | MessageReceivedEvent
 }
 
 func Listen(connChan chan net.Conn, listener net.Listener) {
@@ -52,7 +61,7 @@ func StartServer() (net.Listener, error) {
 }
 
 func ReadEvent[T Event](conn net.Conn, event *T) error {
-	buf := make([]byte, 1024)
+	buf := make([]byte, 4096)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return fmt.Errorf("error reading from connection: %w", err)

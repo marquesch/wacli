@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
-	"time"
 
+	"github.com/marquesch/wasvc/internal/socket"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -231,50 +232,46 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 	return nil
 }
 
-func ListenEvents() (chan any, error) {
-	eventsChannel := make(chan any)
-	WAClient.AddEventHandler(func(evt any) {
-		switch evt.(type) {
-		case *events.Message:
-			eventsChannel <- evt
+func GetMessageEvents(msgChan chan events.Message) uint32 {
+	eventHandlerId := WAClient.AddEventHandler(func(evt any) {
+		if msg, ok := evt.(*events.Message); ok {
+			msgChan <- *msg
 		}
 	})
 
-	return eventsChannel, nil
+	return eventHandlerId
 }
 
-func GetMessages(showTime bool) (chan string, error) {
-	messageChann := make(chan string)
+func GetMessages(ctx context.Context, conn net.Conn, phoneNumber string) {
+	// toJID := GetJID(phoneNumber)
 
-	eventChann, err := ListenEvents()
-	if err != nil {
-		return messageChann, fmt.Errorf("error creating event channel: %w", err)
-	}
+	msgChan := make(chan events.Message)
+	defer close(msgChan)
+
+	eventHandlerId := GetMessageEvents(msgChan)
+	defer WAClient.RemoveEventHandler(eventHandlerId)
 
 	go func() {
 		for {
-			event := <-eventChann
-			if msg, isMsg := event.(*events.Message); isMsg {
-				var formattedMessage string
-				if msg.Info.Type == "text" {
-					if showTime {
-						formattedMessage += fmt.Sprintf("[%s] ", msg.Info.Timestamp.Local().Format(time.TimeOnly))
-					}
-
-					formattedMessage += msg.Message.GetConversation()
-
-					color := colorBlue
-					if msg.Info.IsFromMe {
-						color = colorGreen
-					}
-
-					formattedMessage = fmt.Sprintf("%s %s", color, formattedMessage)
-
-					messageChann <- formattedMessage
+			select {
+			case msg := <-msgChan:
+				fmt.Printf("%#v\n", msg)
+				socketEvent := socket.MessageReceivedEvent{
+					IsFromMe:  msg.Info.IsFromMe,
+					Type:      msg.Info.Type,
+					MediaType: msg.Info.MediaType,
+					Body:      msg.Message.GetConversation(),
+					Timestamp: msg.Info.Timestamp,
 				}
+
+				err := socket.WriteEvent(conn, socketEvent)
+				if err != nil {
+					fmt.Println("error writing MessageReceivedEvent: ", err)
+				}
+
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
-
-	return messageChann, nil
 }
