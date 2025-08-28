@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 
 	wacli "github.com/marquesch/wasvc/internal/cli"
@@ -15,6 +17,7 @@ func main() {
 	var body string
 	var filePath string
 	var caption string
+	var showTimestamp bool
 
 	cmd := &cli.Command{
 		Name:  "wacli",
@@ -120,6 +123,73 @@ func main() {
 
 					fmt.Println(response.Message)
 					return nil
+				},
+			},
+			{
+				Name: "get",
+				Arguments: []cli.Argument{
+					&cli.StringArg{
+						Name:        "phone-number",
+						Destination: &phoneNumber,
+					},
+				},
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:        "show-timestamp",
+						Destination: &showTimestamp,
+					},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					command := socket.ClientCommand{
+						Command: "get",
+						Args:    []string{phoneNumber},
+					}
+
+					conn, err := net.Dial("unix", socket.SocketPath)
+					if err != nil {
+						return fmt.Errorf("error dialing server: %w", err)
+					}
+					defer conn.Close()
+
+					err = socket.WriteEvent(conn, command)
+					if err != nil {
+						return fmt.Errorf("write error: %w", err)
+					}
+
+					var response socket.ServerResponse
+
+					err = socket.ReadEvent(conn, &response)
+					if err != nil {
+						return fmt.Errorf("read error: %w", err)
+					}
+
+					if !response.Success {
+						return errors.New("server responded unsuccessfully")
+					}
+
+					eventChan := make(chan socket.MessageReceivedEvent)
+					go func() {
+						var msg socket.MessageReceivedEvent
+						for {
+							err := socket.ReadEvent(conn, &msg)
+							if err != nil {
+								return
+							}
+
+							eventChan <- msg
+						}
+					}()
+
+					for {
+						select {
+						case msg := <-eventChan:
+							fmt.Println(msg.Body)
+						case <-ctx.Done():
+							command := socket.ClientCommand{Command: "cancel"}
+							socket.WriteEvent(conn, command)
+							return nil
+						}
+					}
 				},
 			},
 		},
