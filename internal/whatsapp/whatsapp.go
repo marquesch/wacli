@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	"github.com/marquesch/wasvc/internal/socket"
 	"github.com/mdp/qrterminal/v3"
@@ -22,8 +23,9 @@ import (
 )
 
 const (
-	colorGreen = "\\[\\033[0;32m\\]"
-	colorBlue  = "\\[\\033[0;34m\\]"
+	colorGreen = "\033[0;32m"
+	colorBlue  = "\033[0;34m"
+	noColor    = "\033[0m"
 )
 
 var (
@@ -232,9 +234,13 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 	return nil
 }
 
-func GetMessageEvents(msgChan chan events.Message) uint32 {
+func GetMessageEvents(msgChan chan events.Message, toJID types.JID) uint32 {
 	eventHandlerId := WAClient.AddEventHandler(func(evt any) {
 		if msg, ok := evt.(*events.Message); ok {
+			if msg.Message == nil || msg.Info.Chat != toJID {
+				return
+			}
+
 			msgChan <- *msg
 		}
 	})
@@ -243,28 +249,38 @@ func GetMessageEvents(msgChan chan events.Message) uint32 {
 }
 
 func GetMessages(ctx context.Context, conn net.Conn, phoneNumber string) {
-	// toJID := GetJID(phoneNumber)
+	toJID := GetJID(phoneNumber)
 
 	msgChan := make(chan events.Message)
-	defer close(msgChan)
-
-	eventHandlerId := GetMessageEvents(msgChan)
-	defer WAClient.RemoveEventHandler(eventHandlerId)
+	eventHandlerId := GetMessageEvents(msgChan, toJID)
 
 	go func() {
+		defer close(msgChan)
+		defer WAClient.RemoveEventHandler(eventHandlerId)
 		for {
 			select {
 			case msg := <-msgChan:
-				fmt.Printf("%#v\n", msg)
-				socketEvent := socket.MessageReceivedEvent{
-					IsFromMe:  msg.Info.IsFromMe,
-					Type:      msg.Info.Type,
-					MediaType: msg.Info.MediaType,
-					Body:      msg.Message.GetConversation(),
-					Timestamp: msg.Info.Timestamp,
+				var color string
+
+				if msg.Info.IsFromMe {
+					color = colorGreen
+				} else {
+					color = colorBlue
 				}
 
-				err := socket.WriteEvent(conn, socketEvent)
+				var body string
+				switch msg.Info.Type {
+				case "text":
+					body = msg.Message.GetConversation()
+
+				case "media":
+					body = msg.Info.MediaType
+				}
+
+				eventMessage := fmt.Sprintf("\n%s%s %s%s", color, msg.Info.Timestamp.Format(time.TimeOnly), body, noColor)
+
+				event := socket.ServerResponse{Success: true, Message: eventMessage}
+				err := socket.WriteEvent(conn, event)
 				if err != nil {
 					fmt.Println("error writing MessageReceivedEvent: ", err)
 				}

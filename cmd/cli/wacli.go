@@ -167,23 +167,23 @@ func main() {
 						return errors.New("server responded unsuccessfully")
 					}
 
-					eventChan := make(chan socket.MessageReceivedEvent)
+					eventChan := make(chan socket.ServerResponse)
 					go func() {
-						var msg socket.MessageReceivedEvent
+						var evt socket.ServerResponse
 						for {
-							err := socket.ReadEvent(conn, &msg)
+							err := socket.ReadEvent(conn, &evt)
 							if err != nil {
 								return
 							}
 
-							eventChan <- msg
+							eventChan <- evt
 						}
 					}()
 
 					for {
 						select {
-						case msg := <-eventChan:
-							fmt.Println(msg.Body)
+						case evt := <-eventChan:
+							fmt.Fprintf(os.Stdout, evt.Message)
 						case <-ctx.Done():
 							command := socket.ClientCommand{Command: "cancel"}
 							socket.WriteEvent(conn, command)
