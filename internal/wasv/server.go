@@ -37,17 +37,19 @@ func HandleConnection(conn net.Conn) error {
 			response.Success = false
 			response.Message = fmt.Sprintf("error checking if contact exists: %s", err)
 		}
+
 	case "get":
 		phoneNumber := clientCommand.Args[0]
 		ctx, cancel := context.WithCancel(context.Background())
-		whatsapp.GetMessages(ctx, conn, phoneNumber)
 
 		response.Success = true
 		err = socket.WriteEvent(conn, response)
 
+		whatsapp.GetMessages(ctx, conn, phoneNumber)
 		for {
 			err = socket.ReadEvent(conn, &clientCommand)
 			if err != nil {
+				cancel()
 				return fmt.Errorf("error reading event from client: %w", err)
 			}
 

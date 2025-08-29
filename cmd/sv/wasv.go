@@ -62,10 +62,7 @@ func main() {
 		fmt.Println("error listening to events: ", err)
 	}
 
-	for {
-		select {
-		case conn := <-connChan:
-			go wasv.HandleConnection(conn)
-		}
+	for conn := range connChan {
+		go wasv.HandleConnection(conn)
 	}
 }
