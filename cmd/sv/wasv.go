@@ -25,7 +25,7 @@ func main() {
 	connChan := make(chan net.Conn)
 
 	go whatsapp.Connect(successChan)
-	go socket.Listen(connChan, listener)
+	go socket.Accept(connChan, listener)
 
 	var retries int
 	var done bool
