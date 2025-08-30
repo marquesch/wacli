@@ -7,10 +7,10 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"time"
 
+	"github.com/marquesch/wasvc/internal/database"
 	"github.com/marquesch/wasvc/internal/socket"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
@@ -29,26 +29,45 @@ const (
 )
 
 var (
-	databasePath string
-	WAClient     *whatsmeow.Client
+	WAClient *whatsmeow.Client
 
 	imageMimeTypeRegex = regexp.MustCompile("image/.*")
 	videoMimeTypeRegex = regexp.MustCompile("video/.*")
 	audioMimeTypeRegex = regexp.MustCompile("audio/.*")
 )
 
-func init() {
-	userHomeDir, err := os.UserHomeDir()
-	if err != nil {
-		panic(err)
-	}
+func updateDBHandler(evt any) {
+	if msg, ok := evt.(*events.Message); ok {
+		contactName := msg.Info.PushName
+		contactJID := msg.Info.Chat.String()
+		isGroup := msg.Info.IsGroup
+		whatsappMsgID := msg.Info.ID
+		msgType := msg.Info.Type
+		mediaType := msg.Info.MediaType
+		body := msg.Message.GetConversation()
+		msgTimestamp := msg.Info.Timestamp
 
-	databasePath = filepath.Join(userHomeDir, ".local", "lib", "wacli", "sqlite.db")
-	dbDir := filepath.Dir(databasePath)
+		var mediaURL string
+		switch mediaType {
+		case "video":
+			mediaURL = *msg.Message.VideoMessage.URL
+		case "image":
+			mediaURL = *msg.Message.ImageMessage.URL
+		case "document":
+			mediaURL = *msg.Message.DocumentMessage.URL
+		}
 
-	err = os.MkdirAll(dbDir, 0755)
-	if err != nil {
-		panic(err)
+		contactID, err := database.UpsertContact(contactJID, contactName, isGroup)
+		if err != nil {
+			fmt.Println(err)
+		}
+		fmt.Println("contact_id: ", contactID)
+
+		msgID, err := database.InsertMessage(contactID, whatsappMsgID, msgType, mediaType, body, mediaURL, nil, msgTimestamp)
+		if err != nil {
+			fmt.Println(err)
+		}
+		fmt.Println("msg_id: ", msgID)
 	}
 }
 
@@ -56,7 +75,7 @@ func Connect(successChan chan bool) {
 	dbLog := waLog.Stdout("Database", "ERROR", true)
 
 	ctx := context.Background()
-	container, err := sqlstore.New(ctx, "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", databasePath), dbLog)
+	container, err := sqlstore.New(ctx, "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", database.WhatsmeowDatabasePath), dbLog)
 	if err != nil {
 		successChan <- false
 	}
@@ -90,6 +109,7 @@ func Connect(successChan chan bool) {
 		}
 	}
 	WAClient.SendPresence(types.PresenceAvailable)
+	WAClient.AddEventHandler(updateDBHandler)
 
 	successChan <- true
 }
@@ -234,6 +254,10 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 	return nil
 }
 
+// func GetConversationMessages(phoneNumber string) {
+// 	toJID := GetJID(phoneNumber)
+// }
+
 func GetMessageEvents(msgChan chan events.Message, toJID types.JID) uint32 {
 	eventHandlerId := WAClient.AddEventHandler(func(evt any) {
 		if msg, ok := evt.(*events.Message); ok {
@@ -248,7 +272,7 @@ func GetMessageEvents(msgChan chan events.Message, toJID types.JID) uint32 {
 	return eventHandlerId
 }
 
-func GetMessages(ctx context.Context, conn net.Conn, phoneNumber string) {
+func StreamMessages(ctx context.Context, conn net.Conn, phoneNumber string) {
 	toJID := GetJID(phoneNumber)
 
 	msgChan := make(chan events.Message)

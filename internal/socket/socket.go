@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"time"
 )
 
 const SocketPath = "/tmp/app.sock"
@@ -21,19 +20,11 @@ type ServerResponse struct {
 	Message string `json:"response"`
 }
 
-type MessageReceivedEvent struct {
-	IsFromMe  bool      `json:"from_me"`
-	Type      string    `json:"type"`
-	MediaType string    `json:"media_type"`
-	Body      string    `json:"body"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
 type Event interface {
-	ClientCommand | ServerResponse | MessageReceivedEvent
+	ClientCommand | ServerResponse
 }
 
-func Listen(connChan chan net.Conn, listener net.Listener) {
+func Accept(connChan chan net.Conn, listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {

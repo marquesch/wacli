@@ -45,7 +45,7 @@ func HandleConnection(conn net.Conn) error {
 		response.Success = true
 		err = socket.WriteEvent(conn, response)
 
-		whatsapp.GetMessages(ctx, conn, phoneNumber)
+		whatsapp.StreamMessages(ctx, conn, phoneNumber)
 		for {
 			err = socket.ReadEvent(conn, &clientCommand)
 			if err != nil {
