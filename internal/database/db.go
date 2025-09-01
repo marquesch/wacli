@@ -8,6 +8,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"go.mau.fi/whatsmeow/types"
 )
 
 var (
@@ -27,9 +28,8 @@ func createTables() error {
 	createContactTableSQL := `
 	CREATE TABLE IF NOT EXISTS contact (
 		id INTEGER NOT NULL PRIMARY KEY,
-		name TEXT,
-		jid TEXT UNIQUE,
-		is_group BOOLEAN
+		name TEXT NOT NULL,
+		jid TEXT UNIQUE
 	);
 	`
 	_, err = transaction.Exec(createContactTableSQL)
@@ -37,10 +37,24 @@ func createTables() error {
 		return fmt.Errorf("error creating contact table: %w", err)
 	}
 
+	createChatTableSQL := `
+	CREATE TABLE IF NOT EXISTS chat (
+		id INTEGER NOT NULL PRIMARY KEY,
+		name TEXT NOT NULL,
+		jid TEXT UNIQUE,
+		is_group BOOLEAN
+	)
+	`
+	_, err = transaction.Exec(createChatTableSQL)
+	if err != nil {
+		return fmt.Errorf("error creating contact table: %w", err)
+	}
+
 	createMessageTableSQL := `
 	CREATE TABLE IF NOT EXISTS message (
 		id INTEGER NOT NULL PRIMARY KEY,
-		contact_id INTEGER NOT NULL,
+		chat_id INTEGER NOT NULL,
+		author_id INTEGER NOT NULL,
 		whatsapp_id TEXT UNIQUE NOT NULL,
 	    type TEXT NOT NULL,
 		media_type TEXT,
@@ -48,7 +62,7 @@ func createTables() error {
 		media_url TEXT,
 		quoted_message_id INTEGER,
 		timestamp TIMESTAMP,
-		FOREIGN KEY (contact_id) REFERENCES contact(id),
+		FOREIGN KEY (author_id) REFERENCES contact(id),
 		FOREIGN KEY (quoted_message_id) REFERENCES message(id)
 	);
 	`
@@ -94,54 +108,92 @@ func init() {
 	}
 }
 
-func UpsertContact(jid string, name string, isGroup bool) (uint32, error) {
+func UpsertChat(jid types.JID, name string, isGroup bool) (uint32, error) {
+	var chatID uint32
+
 	tx, err := db.Begin()
 	if err != nil {
-		return 0, fmt.Errorf("error beginning transaction: %w", err)
+		return chatID, fmt.Errorf("error beginningg transaction: %w", err)
 	}
 
 	defer tx.Rollback()
 
 	statement := `
-	INSERT INTO contact(jid, name, is_group)
+	INSERT INTO chat(jid, name, is_group)
 	VALUES (?, ?, ?)
 	ON CONFLICT(jid) DO UPDATE SET
 		name = excluded.name
+		WHERE excluded.name <> ''
 	RETURNING (id);
 	`
 
-	var id uint32
-	result := tx.QueryRow(statement, jid, name, isGroup)
-	result.Scan(&id)
+	err = tx.QueryRow(statement, jid.String(), name, isGroup).Scan(&chatID)
+	if err != nil {
+		return chatID, fmt.Errorf("error scanning id: %w", err)
+	}
 
 	err = tx.Commit()
 	if err != nil {
-		return 0, fmt.Errorf("error committing contact upsert: %w", err)
+		return chatID, fmt.Errorf("error commiting chat upsert: %w", err)
 	}
 
-	return id, nil
+	return chatID, nil
 }
 
-func InsertMessage(contactID uint32, whatsappMsgID string, msgType string, mediaType, body string, mediaURL string, quotedMsgID *uint32, msgTimestamp time.Time) (uint32, error) {
+func UpsertContact(jid types.JID, name string) (uint32, error) {
+	var contactID uint32
+
 	tx, err := db.Begin()
 	if err != nil {
-		return 0, fmt.Errorf("error beginning transaction: %w", err)
+		return contactID, fmt.Errorf("error beginning transaction: %w", err)
 	}
 
 	defer tx.Rollback()
 
-	var msgID uint32
-
 	statement := `
-	INSERT INTO message(contact_id, whatsapp_id, type, media_type, body, media_url, quoted_message_id, timestamp)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO contact(jid, name)
+	VALUES (?, ?)
+	ON CONFLICT(jid) DO UPDATE SET
+		name = excluded.name
+		WHERE excluded.name <> ''
 	RETURNING (id);
 	`
 
-	tx.QueryRow(statement, contactID, whatsappMsgID, msgType, mediaType, body, mediaURL, quotedMsgID, msgTimestamp).Scan(&msgID)
+	result := tx.QueryRow(statement, jid.String(), name)
+	result.Scan(&contactID)
+
 	err = tx.Commit()
 	if err != nil {
-		return 0, fmt.Errorf("error committing message upsert: %w", err)
+		return contactID, fmt.Errorf("error committing contact upsert: %w", err)
+	}
+
+	return contactID, nil
+}
+
+func InsertMessage(chatID uint32, authorID uint32, whatsappMsgID string, msgType string, mediaType string, body string, mediaURL string, quotedMsgID *uint32, msgTimestamp time.Time) (uint32, error) {
+	var msgID uint32
+
+	tx, err := db.Begin()
+	if err != nil {
+		return msgID, fmt.Errorf("error beginning transaction: %w", err)
+	}
+
+	defer tx.Rollback()
+
+	statement := `
+	INSERT INTO message(chat_id, author_id, whatsapp_id, type, media_type, body, media_url, quoted_message_id, timestamp)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	RETURNING (id);
+	`
+
+	err = tx.QueryRow(statement, chatID, authorID, whatsappMsgID, msgType, mediaType, body, mediaURL, quotedMsgID, msgTimestamp).Scan(&msgID)
+	if err != nil {
+		return msgID, fmt.Errorf("error scanning message_id: %w", err)
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return msgID, fmt.Errorf("error committing message upsert: %w", err)
 	}
 
 	return msgID, nil
