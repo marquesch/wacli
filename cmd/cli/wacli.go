@@ -183,7 +183,7 @@ func main() {
 					for {
 						select {
 						case evt := <-eventChan:
-							fmt.Fprintf(os.Stdout, evt.Message)
+							fmt.Fprint(os.Stdout, evt.Message)
 						case <-ctx.Done():
 							command := socket.ClientCommand{Command: "cancel"}
 							socket.WriteEvent(conn, command)

@@ -38,16 +38,30 @@ var (
 
 func updateDBHandler(evt any) {
 	if msg, ok := evt.(*events.Message); ok {
-		contactName := msg.Info.PushName
-		contactJID := msg.Info.Chat.String()
+		var err error
+		var chatName string
+		var mediaURL string
+		authorJID := msg.Info.Sender.ToNonAD()
+		authorName := msg.Info.PushName
+		chatJID := msg.Info.Chat.ToNonAD()
 		isGroup := msg.Info.IsGroup
+		if !msg.Info.IsFromMe {
+			chatName = msg.Info.PushName
+		}
+		if isGroup {
+			groupInfo, err := WAClient.GetGroupInfo(chatJID)
+			if err != nil {
+				fmt.Println("error trying to get group info: ", err)
+				return
+			}
+			chatName = groupInfo.Name
+		}
 		whatsappMsgID := msg.Info.ID
 		msgType := msg.Info.Type
 		mediaType := msg.Info.MediaType
 		body := msg.Message.GetConversation()
 		msgTimestamp := msg.Info.Timestamp
 
-		var mediaURL string
 		switch mediaType {
 		case "video":
 			mediaURL = *msg.Message.VideoMessage.URL
@@ -57,17 +71,25 @@ func updateDBHandler(evt any) {
 			mediaURL = *msg.Message.DocumentMessage.URL
 		}
 
-		contactID, err := database.UpsertContact(contactJID, contactName, isGroup)
+		var authorID uint32
+		authorID, err = database.UpsertContact(authorJID, authorName)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println("error upserting contact: ", err)
+			return
 		}
-		fmt.Println("contact_id: ", contactID)
 
-		msgID, err := database.InsertMessage(contactID, whatsappMsgID, msgType, mediaType, body, mediaURL, nil, msgTimestamp)
+		var chatID uint32
+		chatID, err = database.UpsertChat(chatJID, chatName, isGroup)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println("error upserting chat: ", err)
+			return
 		}
-		fmt.Println("msg_id: ", msgID)
+
+		_, err = database.InsertMessage(chatID, authorID, whatsappMsgID, msgType, mediaType, body, mediaURL, nil, msgTimestamp)
+		if err != nil {
+			fmt.Println("error inserting message: ", err)
+			return
+		}
 	}
 }
 
