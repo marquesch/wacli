@@ -108,6 +108,7 @@ func init() {
 	}
 }
 
+// FIXME: dont update empty name (sending message)
 func UpsertChat(jid types.JID, name string, isGroup bool) (uint32, error) {
 	var chatID uint32
 
@@ -123,7 +124,6 @@ func UpsertChat(jid types.JID, name string, isGroup bool) (uint32, error) {
 	VALUES (?, ?, ?)
 	ON CONFLICT(jid) DO UPDATE SET
 		name = excluded.name
-		WHERE excluded.name <> ''
 	RETURNING (id);
 	`
 
@@ -155,7 +155,6 @@ func UpsertContact(jid types.JID, name string) (uint32, error) {
 	VALUES (?, ?)
 	ON CONFLICT(jid) DO UPDATE SET
 		name = excluded.name
-		WHERE excluded.name <> ''
 	RETURNING (id);
 	`
 
