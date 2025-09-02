@@ -25,16 +25,16 @@ func createTables() error {
 		return fmt.Errorf("error creating transaction: %w", err)
 	}
 
-	createContactTableSQL := `
-	CREATE TABLE IF NOT EXISTS contact (
+	createWhatsappTableSQL := `
+	CREATE TABLE IF NOT EXISTS whatsapp_user (
 		id INTEGER NOT NULL PRIMARY KEY,
 		name TEXT NOT NULL,
 		jid TEXT UNIQUE
 	);
 	`
-	_, err = transaction.Exec(createContactTableSQL)
+	_, err = transaction.Exec(createWhatsappTableSQL)
 	if err != nil {
-		return fmt.Errorf("error creating contact table: %w", err)
+		return fmt.Errorf("error creating whatsapp_user table: %w", err)
 	}
 
 	createChatTableSQL := `
@@ -47,7 +47,7 @@ func createTables() error {
 	`
 	_, err = transaction.Exec(createChatTableSQL)
 	if err != nil {
-		return fmt.Errorf("error creating contact table: %w", err)
+		return fmt.Errorf("error creating chat table: %w", err)
 	}
 
 	createMessageTableSQL := `
@@ -62,7 +62,7 @@ func createTables() error {
 		media_url TEXT,
 		quoted_message_id INTEGER,
 		timestamp TIMESTAMP,
-		FOREIGN KEY (author_id) REFERENCES contact(id),
+		FOREIGN KEY (author_id) REFERENCES whatsapp_user(id),
 		FOREIGN KEY (quoted_message_id) REFERENCES message(id)
 	);
 	`
@@ -108,13 +108,12 @@ func init() {
 	}
 }
 
-// FIXME: dont update empty name (sending message)
 func UpsertChat(jid types.JID, name string, isGroup bool) (uint32, error) {
 	var chatID uint32
 
 	tx, err := db.Begin()
 	if err != nil {
-		return chatID, fmt.Errorf("error beginningg transaction: %w", err)
+		return chatID, fmt.Errorf("error beginning transaction: %w", err)
 	}
 
 	defer tx.Rollback()
@@ -123,7 +122,10 @@ func UpsertChat(jid types.JID, name string, isGroup bool) (uint32, error) {
 	INSERT INTO chat(jid, name, is_group)
 	VALUES (?, ?, ?)
 	ON CONFLICT(jid) DO UPDATE SET
-		name = excluded.name
+		name = CASE
+			WHEN excluded.name <> '' THEN excluded.name
+			ELSE chat.name
+		END
 	RETURNING (id);
 	`
 
@@ -140,18 +142,18 @@ func UpsertChat(jid types.JID, name string, isGroup bool) (uint32, error) {
 	return chatID, nil
 }
 
-func UpsertContact(jid types.JID, name string) (uint32, error) {
-	var contactID uint32
+func UpsertWhatsappUser(jid types.JID, name string) (uint32, error) {
+	var whatsappUserID uint32
 
 	tx, err := db.Begin()
 	if err != nil {
-		return contactID, fmt.Errorf("error beginning transaction: %w", err)
+		return whatsappUserID, fmt.Errorf("error beginning transaction: %w", err)
 	}
 
 	defer tx.Rollback()
 
 	statement := `
-	INSERT INTO contact(jid, name)
+	INSERT INTO whatsapp_user(jid, name)
 	VALUES (?, ?)
 	ON CONFLICT(jid) DO UPDATE SET
 		name = excluded.name
@@ -159,14 +161,14 @@ func UpsertContact(jid types.JID, name string) (uint32, error) {
 	`
 
 	result := tx.QueryRow(statement, jid.String(), name)
-	result.Scan(&contactID)
+	result.Scan(&whatsappUserID)
 
 	err = tx.Commit()
 	if err != nil {
-		return contactID, fmt.Errorf("error committing contact upsert: %w", err)
+		return whatsappUserID, fmt.Errorf("error committing contact upsert: %w", err)
 	}
 
-	return contactID, nil
+	return whatsappUserID, nil
 }
 
 func InsertMessage(chatID uint32, authorID uint32, whatsappMsgID string, msgType string, mediaType string, body string, mediaURL string, quotedMsgID *uint32, msgTimestamp time.Time) (uint32, error) {
@@ -196,4 +198,16 @@ func InsertMessage(chatID uint32, authorID uint32, whatsappMsgID string, msgType
 	}
 
 	return msgID, nil
+}
+
+func CheckUserInDatabase(userJID types.JID) (bool, error) {
+	var userExists bool
+
+	statement := `
+	SELECT EXISTS(SELECT 1 FROM whatsapp_user WHERE jid = '?');
+	`
+
+	err := db.QueryRow(statement, userJID.String()).Scan(userExists)
+
+	return userExists, err
 }
