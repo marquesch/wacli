@@ -95,7 +95,7 @@ func sendMessage(messageType string, args []string) error {
 func checkContact(phoneNumber string) (bool, error) {
 	toJID := whatsapp.GetJID(phoneNumber)
 
-	contactExists, err := whatsapp.ContactExists(toJID)
+	contactExists, err := whatsapp.WhatsappUserExists(toJID)
 	if err != nil {
 		return false, fmt.Errorf("error checking if contact exists: %w", err)
 	}

@@ -72,9 +72,9 @@ func updateDBHandler(evt any) {
 		}
 
 		var authorID uint32
-		authorID, err = database.UpsertContact(authorJID, authorName)
+		authorID, err = database.UpsertWhatsappUser(authorJID, authorName)
 		if err != nil {
-			fmt.Println("error upserting contact: ", err)
+			fmt.Println("error upserting whatsapp user: ", err)
 			return
 		}
 
@@ -136,14 +136,22 @@ func Connect(successChan chan bool) {
 	successChan <- true
 }
 
-func ContactExists(jid types.JID) (bool, error) {
-	// #TODO: persist contacts to prevent checking on whatsapp every time
-	usersInfo, err := WAClient.GetUserInfo([]types.JID{jid})
+func WhatsappUserExists(jid types.JID) (bool, error) {
+	userExists, err := database.CheckUserInDatabase(jid)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("error checking user existence in database: %w", err)
 	}
 
-	userDevices := usersInfo[jid].Devices
+	if userExists {
+		return true, nil
+	}
+
+	userInfo, err := WAClient.GetUserInfo([]types.JID{jid})
+	if err != nil {
+		return false, fmt.Errorf("error getting user info from client: %w", err)
+	}
+
+	userDevices := userInfo[jid].Devices
 	return len(userDevices) > 0, nil
 }
 
@@ -156,7 +164,7 @@ func GetJID(phoneNumber string) types.JID {
 func SendTextMessage(phoneNumber string, text string) error {
 	toJID := GetJID(phoneNumber)
 
-	contactExists, err := ContactExists(toJID)
+	contactExists, err := WhatsappUserExists(toJID)
 	if err != nil {
 		return fmt.Errorf("error checking contact existence: %w", err)
 	}
@@ -180,7 +188,7 @@ func SendTextMessage(phoneNumber string, text string) error {
 func SendMediaMessage(phoneNumber string, filePath string, caption string) error {
 	toJID := GetJID(phoneNumber)
 
-	contactExists, err := ContactExists(toJID)
+	contactExists, err := WhatsappUserExists(toJID)
 	if err != nil {
 		return fmt.Errorf("error checking contact existence: %w", err)
 	}
@@ -275,10 +283,6 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 
 	return nil
 }
-
-// func GetConversationMessages(phoneNumber string) {
-// 	toJID := GetJID(phoneNumber)
-// }
 
 func GetMessageEvents(msgChan chan events.Message, toJID types.JID) uint32 {
 	eventHandlerId := WAClient.AddEventHandler(func(evt any) {
