@@ -207,7 +207,7 @@ func CheckUserInDatabase(userJID types.JID) (bool, error) {
 	SELECT EXISTS(SELECT 1 FROM whatsapp_user WHERE jid = '?');
 	`
 
-	err := db.QueryRow(statement, userJID.String()).Scan(userExists)
+	err := db.QueryRow(statement, userJID.String()).Scan(&userExists)
 
 	return userExists, err
 }
