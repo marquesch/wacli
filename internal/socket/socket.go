@@ -1,6 +1,7 @@
 package socket
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -51,14 +52,13 @@ func StartServer() (net.Listener, error) {
 	return listener, nil
 }
 
-func ReadEvent[T Event](conn net.Conn, event *T) error {
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
+func ReadEvent[T Event](reader *bufio.Reader, event *T) error {
+	buffer, err := reader.ReadString('\n')
 	if err != nil {
 		return fmt.Errorf("error reading from connection: %w", err)
 	}
 
-	err = json.Unmarshal(buf[:n], &event)
+	err = json.Unmarshal([]byte(buffer), &event)
 	if err != nil {
 		return fmt.Errorf("error unmarshaling json: %w", err)
 	}
@@ -72,7 +72,7 @@ func WriteEvent[T Event](conn net.Conn, event T) error {
 		return fmt.Errorf("error marshaling json: %w", err)
 	}
 
-	_, err = conn.Write([]byte(message))
+	_, err = conn.Write((append(message, '\n')))
 	if err != nil {
 		return fmt.Errorf("error writing to channel: %w", err)
 	}

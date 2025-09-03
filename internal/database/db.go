@@ -8,7 +8,9 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 )
 
 var (
@@ -156,7 +158,10 @@ func UpsertWhatsappUser(jid types.JID, name string) (uint32, error) {
 	INSERT INTO whatsapp_user(jid, name)
 	VALUES (?, ?)
 	ON CONFLICT(jid) DO UPDATE SET
-		name = excluded.name
+		name = CASE
+			WHEN excluded.name <> '' THEN excluded.name
+			ELSE whatsapp_user.name
+		END
 	RETURNING (id);
 	`
 
@@ -210,4 +215,34 @@ func CheckUserInDatabase(userJID types.JID) (bool, error) {
 	err := db.QueryRow(statement, userJID.String()).Scan(&userExists)
 
 	return userExists, err
+}
+
+func GetMessages(chatJID types.JID) ([]events.Message, error) {
+	var msgs []events.Message
+
+	statement := `
+	SELECT message.type, message.media_type, message.body, message.timestamp, whatsapp_user.jid != ? FROM message
+	JOIN chat ON message.chat_id = chat.id
+	JOIN whatsapp_user ON message.author_id = whatsapp_user.id
+	WHERE chat.jid = ?;
+	`
+
+	rows, err := db.Query(statement, chatJID.String(), chatJID.String())
+	if err != nil {
+		return msgs, fmt.Errorf("error querying messages: %w", err)
+	}
+
+	for rows.Next() {
+		var msg events.Message
+		msg.Info = types.MessageInfo{}
+		msg.Message = &waE2E.Message{}
+		err = rows.Scan(&msg.Info.Type, &msg.Info.MediaType, &msg.Message.Conversation, &msg.Info.Timestamp, &msg.Info.IsFromMe)
+		if err != nil {
+			return msgs, fmt.Errorf("error scanning msgs: %w", err)
+		}
+
+		msgs = append(msgs, msg)
+	}
+
+	return msgs, nil
 }
