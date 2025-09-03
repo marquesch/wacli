@@ -26,6 +26,13 @@ func main() {
 		Commands: []*cli.Command{
 			{
 				Name: "send",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:        "no-wait",
+						Usage:       "Send message and exit immediately without waiting for server response",
+						Destination: &noWait,
+					},
+				},
 				Commands: []*cli.Command{
 					{
 						Name: "text",
@@ -37,13 +44,6 @@ func main() {
 							&cli.StringArg{
 								Name:        "body",
 								Destination: &body,
-							},
-						},
-						Flags: []cli.Flag{
-							&cli.BoolFlag{
-								Name:        "no-wait",
-								Usage:       "Send message and exit immediately without waiting for server response",
-								Destination: &noWait,
 							},
 						},
 						Action: func(ctx context.Context, cmd *cli.Command) error {
