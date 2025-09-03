@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/marquesch/wasvc/internal/database"
 	"github.com/marquesch/wasvc/internal/socket"
@@ -50,16 +51,29 @@ func HandleConnection(conn net.Conn) error {
 
 		persistedMessages, err := database.GetMessages(whatsapp.GetJID(phoneNumber))
 		if err != nil {
+			cancel()
 			return fmt.Errorf("error getting messages from whatspp_user: %w", err)
 		}
+
+		var lastDate time.Time
 		for _, persistedMessage := range persistedMessages {
+			messageDay := persistedMessage.Info.Timestamp.Truncate(24 * time.Hour)
+			if lastDate.Before(messageDay) {
+				lastDate = messageDay
+				event := socket.ServerResponse{Success: true, Message: fmt.Sprintf("\n\n%s\n", lastDate.Format("Mon Jan _2"))}
+				err := socket.WriteEvent(conn, event)
+				if err != nil {
+					cancel()
+					fmt.Println("error writing MessageReceivedEvent: ", err)
+				}
+			}
 			eventMessage := whatsapp.FormatMessage(persistedMessage)
 			event := socket.ServerResponse{Success: true, Message: eventMessage}
 			err := socket.WriteEvent(conn, event)
 			if err != nil {
+				cancel()
 				fmt.Println("error writing MessageReceivedEvent: ", err)
 			}
-			// time.Sleep(time.Millisecond)
 
 		}
 		whatsapp.StreamMessages(ctx, conn, phoneNumber)
