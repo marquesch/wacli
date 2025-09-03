@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"os"
@@ -24,7 +25,8 @@ func SendCommand(command socket.ClientCommand) (socket.ServerResponse, error) {
 
 	var response socket.ServerResponse
 
-	err = socket.ReadEvent(conn, &response)
+	reader := bufio.NewReader(conn)
+	err = socket.ReadEvent(reader, &response)
 	if err != nil {
 		fmt.Println("read error: ", err)
 		os.Exit(1)

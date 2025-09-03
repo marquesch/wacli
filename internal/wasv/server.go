@@ -1,19 +1,22 @@
 package wasv
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net"
 
+	"github.com/marquesch/wasvc/internal/database"
 	"github.com/marquesch/wasvc/internal/socket"
 	"github.com/marquesch/wasvc/internal/whatsapp"
 )
 
 func HandleConnection(conn net.Conn) error {
+	reader := bufio.NewReader(conn)
 	defer conn.Close()
 
 	var clientCommand socket.ClientCommand
-	err := socket.ReadEvent(conn, &clientCommand)
+	err := socket.ReadEvent(reader, &clientCommand)
 	if err != nil {
 		return fmt.Errorf("error reading message: %w", err)
 	}
@@ -45,9 +48,23 @@ func HandleConnection(conn net.Conn) error {
 		response.Success = true
 		err = socket.WriteEvent(conn, response)
 
+		persistedMessages, err := database.GetMessages(whatsapp.GetJID(phoneNumber))
+		if err != nil {
+			return fmt.Errorf("error getting messages from whatspp_user: %w", err)
+		}
+		for _, persistedMessage := range persistedMessages {
+			eventMessage := whatsapp.FormatMessage(persistedMessage)
+			event := socket.ServerResponse{Success: true, Message: eventMessage}
+			err := socket.WriteEvent(conn, event)
+			if err != nil {
+				fmt.Println("error writing MessageReceivedEvent: ", err)
+			}
+			// time.Sleep(time.Millisecond)
+
+		}
 		whatsapp.StreamMessages(ctx, conn, phoneNumber)
 		for {
-			err = socket.ReadEvent(conn, &clientCommand)
+			err = socket.ReadEvent(reader, &clientCommand)
 			if err != nil {
 				cancel()
 				return fmt.Errorf("error reading event from client: %w", err)

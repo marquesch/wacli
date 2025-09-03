@@ -177,9 +177,26 @@ func SendTextMessage(phoneNumber string, text string) error {
 		Conversation: proto.String(text),
 	}
 
-	_, err = WAClient.SendMessage(context.Background(), toJID, message)
+	result, err := WAClient.SendMessage(context.Background(), toJID, message)
 	if err != nil {
 		return fmt.Errorf("error sending message: %w", err)
+	}
+
+	selfID := WAClient.Store.ID
+
+	whatsappUserID, err := database.UpsertWhatsappUser(*selfID, "")
+	if err != nil {
+		return fmt.Errorf("error upserting self user: %w", err)
+	}
+
+	chatID, err := database.UpsertChat(toJID, "", false)
+	if err != nil {
+		return fmt.Errorf("error upserting chat: %w", err)
+	}
+
+	_, err = database.InsertMessage(chatID, whatsappUserID, result.ID, "text", "", text, "", nil, result.Timestamp)
+	if err != nil {
+		return fmt.Errorf("error inserting message: %w", err)
 	}
 
 	return nil
@@ -202,13 +219,17 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		return fmt.Errorf("failed opening file: %w", err)
 	}
 
+	var mediaType string
+	var uploadResponse whatsmeow.UploadResponse
+
 	mimeType := http.DetectContentType(fileBytes)
 
 	var message waE2E.Message
 
 	switch {
 	case imageMimeTypeRegex.MatchString(mimeType):
-		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaImage)
+		mediaType = "image"
+		uploadResponse, err = WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaImage)
 		if err != nil {
 			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
 		}
@@ -226,7 +247,8 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		}
 
 	case videoMimeTypeRegex.MatchString(mimeType):
-		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaVideo)
+		mediaType = "video"
+		uploadResponse, err = WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaVideo)
 		if err != nil {
 			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
 		}
@@ -244,7 +266,8 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		}
 
 	case audioMimeTypeRegex.MatchString(mimeType):
-		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaAudio)
+		mediaType = "audio"
+		uploadResponse, err = WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaAudio)
 		if err != nil {
 			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
 		}
@@ -260,7 +283,8 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		}
 
 	default:
-		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaDocument)
+		mediaType = "document"
+		uploadResponse, err = WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaDocument)
 		if err != nil {
 			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
 		}
@@ -276,9 +300,26 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		}
 	}
 
-	_, err = WAClient.SendMessage(context.Background(), toJID, &message)
+	result, err := WAClient.SendMessage(context.Background(), toJID, &message)
 	if err != nil {
 		return fmt.Errorf("error sending message: %w", err)
+	}
+
+	selfID := WAClient.Store.ID
+
+	whatsappUserID, err := database.UpsertWhatsappUser(*selfID, "")
+	if err != nil {
+		return fmt.Errorf("error upserting self user: %w", err)
+	}
+
+	chatID, err := database.UpsertChat(toJID, "", false)
+	if err != nil {
+		return fmt.Errorf("error upserting chat: %w", err)
+	}
+
+	_, err = database.InsertMessage(chatID, whatsappUserID, result.ID, "media", mediaType, "", uploadResponse.URL, nil, result.Timestamp)
+	if err != nil {
+		return fmt.Errorf("error inserting message: %w", err)
 	}
 
 	return nil
@@ -298,6 +339,29 @@ func GetMessageEvents(msgChan chan events.Message, toJID types.JID) uint32 {
 	return eventHandlerId
 }
 
+func FormatMessage(msg events.Message) string {
+	var color string
+
+	if msg.Info.IsFromMe {
+		color = colorGreen
+	} else {
+		color = colorBlue
+	}
+
+	var body string
+	switch msg.Info.Type {
+	case "text":
+		body = msg.Message.GetConversation()
+
+	case "media":
+		body = msg.Info.MediaType
+	}
+
+	eventMessage := fmt.Sprintf("\n%s%s %s%s", color, msg.Info.Timestamp.Format(time.TimeOnly), body, noColor)
+
+	return eventMessage
+}
+
 func StreamMessages(ctx context.Context, conn net.Conn, phoneNumber string) {
 	toJID := GetJID(phoneNumber)
 
@@ -310,25 +374,7 @@ func StreamMessages(ctx context.Context, conn net.Conn, phoneNumber string) {
 		for {
 			select {
 			case msg := <-msgChan:
-				var color string
-
-				if msg.Info.IsFromMe {
-					color = colorGreen
-				} else {
-					color = colorBlue
-				}
-
-				var body string
-				switch msg.Info.Type {
-				case "text":
-					body = msg.Message.GetConversation()
-
-				case "media":
-					body = msg.Info.MediaType
-				}
-
-				eventMessage := fmt.Sprintf("\n%s%s %s%s", color, msg.Info.Timestamp.Format(time.TimeOnly), body, noColor)
-
+				eventMessage := FormatMessage(msg)
 				event := socket.ServerResponse{Success: true, Message: eventMessage}
 				err := socket.WriteEvent(conn, event)
 				if err != nil {

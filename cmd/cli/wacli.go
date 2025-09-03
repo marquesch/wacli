@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -158,7 +159,8 @@ func main() {
 
 					var response socket.ServerResponse
 
-					err = socket.ReadEvent(conn, &response)
+					reader := bufio.NewReader(conn)
+					err = socket.ReadEvent(reader, &response)
 					if err != nil {
 						return fmt.Errorf("read error: %w", err)
 					}
@@ -171,7 +173,7 @@ func main() {
 					go func() {
 						var evt socket.ServerResponse
 						for {
-							err := socket.ReadEvent(conn, &evt)
+							err := socket.ReadEvent(reader, &evt)
 							if err != nil {
 								return
 							}
