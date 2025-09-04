@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 
 	wacli "github.com/marquesch/wasvc/internal/cli"
 	"github.com/marquesch/wasvc/internal/socket"
@@ -196,8 +197,11 @@ func main() {
 			},
 		},
 	}
+	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, os.Kill)
 
-	if err := cmd.Run(context.Background(), os.Args); err != nil {
+	if err := cmd.Run(ctx, os.Args); err != nil {
+		stop()
 		panic(err)
 	}
 }
