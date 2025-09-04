@@ -11,9 +11,9 @@ import (
 const SocketPath = "/tmp/app.sock"
 
 type ClientCommand struct {
-	Command    string   `json:"command"`
-	Subcommand string   `json:"subcommand"`
-	Args       []string `json:"args"`
+	Command    string `json:"command"`
+	Subcommand string `json:"subcommand"`
+	Args       []any  `json:"args"`
 }
 
 type ServerResponse struct {
