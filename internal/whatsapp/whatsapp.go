@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"regexp"
 	"time"
 
 	"github.com/marquesch/wasvc/internal/database"
-	"github.com/marquesch/wasvc/internal/socket"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -360,30 +358,4 @@ func FormatMessage(msg events.Message) string {
 	eventMessage := fmt.Sprintf("\n%s%s %s%s", color, msg.Info.Timestamp.Format(time.TimeOnly), body, noColor)
 
 	return eventMessage
-}
-
-func StreamMessages(ctx context.Context, conn net.Conn, phoneNumber string) {
-	toJID := GetJID(phoneNumber)
-
-	msgChan := make(chan events.Message)
-	eventHandlerId := GetMessageEvents(msgChan, toJID)
-
-	go func() {
-		defer close(msgChan)
-		defer WAClient.RemoveEventHandler(eventHandlerId)
-		for {
-			select {
-			case msg := <-msgChan:
-				eventMessage := FormatMessage(msg)
-				event := socket.ServerResponse{Success: true, Message: eventMessage}
-				err := socket.WriteEvent(conn, event)
-				if err != nil {
-					fmt.Println("error writing MessageReceivedEvent: ", err)
-				}
-
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
 }
