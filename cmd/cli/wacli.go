@@ -19,7 +19,8 @@ func main() {
 	var body string
 	var filePath string
 	var caption string
-	var showTimestamp bool
+	var follow bool
+	var tail int8
 
 	cmd := &cli.Command{
 		Name:  "wacli",
@@ -47,7 +48,7 @@ func main() {
 							command := socket.ClientCommand{
 								Command:    "send",
 								Subcommand: "text",
-								Args:       []string{phoneNumber, body},
+								Args:       []any{phoneNumber, body},
 							}
 
 							response, err := wacli.SendCommand(command)
@@ -84,7 +85,7 @@ func main() {
 							command := socket.ClientCommand{
 								Command:    "send",
 								Subcommand: "media",
-								Args:       []string{phoneNumber, filePath, caption},
+								Args:       []any{phoneNumber, filePath, caption},
 							}
 
 							response, err := wacli.SendCommand(command)
@@ -111,7 +112,7 @@ func main() {
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					command := socket.ClientCommand{
 						Command: "check",
-						Args:    []string{phoneNumber},
+						Args:    []any{phoneNumber},
 					}
 
 					response, err := wacli.SendCommand(command)
@@ -137,14 +138,19 @@ func main() {
 				},
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
-						Name:        "show-timestamp",
-						Destination: &showTimestamp,
+						Name:        "follow",
+						Destination: &follow,
+					},
+					&cli.Int8Flag{
+						Name:        "tail",
+						Destination: &tail,
+						Value:       20,
 					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					command := socket.ClientCommand{
 						Command: "get",
-						Args:    []string{phoneNumber},
+						Args:    []any{phoneNumber, tail, follow},
 					}
 
 					conn, err := net.Dial("unix", socket.SocketPath)

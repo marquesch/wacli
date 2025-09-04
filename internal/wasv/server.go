@@ -34,7 +34,8 @@ func HandleConnection(conn net.Conn) error {
 		}
 
 	case "check":
-		contactExists, err := checkContact(clientCommand.Args[0])
+		phoneNumber, _ := clientCommand.Args[0].(string)
+		contactExists, err := checkContact(phoneNumber)
 		response.Success = true
 		response.Message = fmt.Sprintf("%t", contactExists)
 		if err != nil {
@@ -43,13 +44,20 @@ func HandleConnection(conn net.Conn) error {
 		}
 
 	case "get":
-		phoneNumber := clientCommand.Args[0]
+		fmt.Println(clientCommand.Args)
+		phoneNumber, _ := clientCommand.Args[0].(string)
+		var tail int
+		if value, ok := clientCommand.Args[1].(float64); ok {
+			tail = int(value)
+		}
+		follow, _ := clientCommand.Args[2].(bool)
+
 		ctx, cancel := context.WithCancel(context.Background())
 
 		response.Success = true
 		err = socket.WriteEvent(conn, response)
 
-		persistedMessages, err := database.GetMessages(whatsapp.GetJID(phoneNumber))
+		persistedMessages, err := database.GetMessages(whatsapp.GetJID(phoneNumber), tail)
 		if err != nil {
 			cancel()
 			return fmt.Errorf("error getting messages from whatspp_user: %w", err)
@@ -76,6 +84,10 @@ func HandleConnection(conn net.Conn) error {
 			}
 
 		}
+		if !follow {
+			cancel()
+			return nil
+		}
 		whatsapp.StreamMessages(ctx, conn, phoneNumber)
 		for {
 			err = socket.ReadEvent(reader, &clientCommand)
@@ -99,20 +111,20 @@ func HandleConnection(conn net.Conn) error {
 	return nil
 }
 
-func sendMessage(messageType string, args []string) error {
+func sendMessage(messageType string, args []any) error {
 	switch messageType {
 	case "text":
-		phoneNumber := args[0]
-		body := args[1]
+		phoneNumber, _ := args[0].(string)
+		body, _ := args[1].(string)
 
 		err := whatsapp.SendTextMessage(phoneNumber, body)
 		if err != nil {
 			return fmt.Errorf("error sending text message: %w", err)
 		}
 	case "media":
-		phoneNumber := args[0]
-		filePath := args[1]
-		caption := args[2]
+		phoneNumber, _ := args[0].(string)
+		filePath, _ := args[1].(string)
+		caption, _ := args[2].(string)
 
 		err := whatsapp.SendMediaMessage(phoneNumber, filePath, caption)
 		if err != nil {

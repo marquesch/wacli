@@ -217,17 +217,22 @@ func CheckUserInDatabase(userJID types.JID) (bool, error) {
 	return userExists, err
 }
 
-func GetMessages(chatJID types.JID) ([]events.Message, error) {
+func GetMessages(chatJID types.JID, messageLimit int) ([]events.Message, error) {
 	var msgs []events.Message
 
 	statement := `
-	SELECT message.type, message.media_type, message.body, message.timestamp, whatsapp_user.jid != ? FROM message
-	JOIN chat ON message.chat_id = chat.id
-	JOIN whatsapp_user ON message.author_id = whatsapp_user.id
-	WHERE chat.jid = ?;
+	SELECT * FROM(
+		SELECT message.type, message.media_type, message.body, message.timestamp, whatsapp_user.jid != ? FROM message
+		JOIN chat ON message.chat_id = chat.id
+		JOIN whatsapp_user ON message.author_id = whatsapp_user.id
+		WHERE chat.jid = ?
+		ORDER BY message.timestamp DESC
+		LIMIT ?
+	) AS subquery
+	ORDER BY timestamp ASC;
 	`
 
-	rows, err := db.Query(statement, chatJID.String(), chatJID.String())
+	rows, err := db.Query(statement, chatJID.String(), chatJID.String(), messageLimit)
 	if err != nil {
 		return msgs, fmt.Errorf("error querying messages: %w", err)
 	}
