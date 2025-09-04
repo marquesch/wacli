@@ -10,6 +10,7 @@ import (
 	"github.com/marquesch/wasvc/internal/database"
 	"github.com/marquesch/wasvc/internal/socket"
 	"github.com/marquesch/wasvc/internal/whatsapp"
+	"go.mau.fi/whatsmeow/types/events"
 )
 
 func HandleConnection(conn net.Conn) error {
@@ -44,7 +45,6 @@ func HandleConnection(conn net.Conn) error {
 		}
 
 	case "get":
-		fmt.Println(clientCommand.Args)
 		phoneNumber, _ := clientCommand.Args[0].(string)
 		var tail int
 		if value, ok := clientCommand.Args[1].(float64); ok {
@@ -85,10 +85,44 @@ func HandleConnection(conn net.Conn) error {
 
 		}
 		if !follow {
+			socket.WriteEvent(conn, socket.ServerResponse{Success: false})
 			cancel()
 			return nil
 		}
-		whatsapp.StreamMessages(ctx, conn, phoneNumber)
+		toJID := whatsapp.GetJID(phoneNumber)
+
+		msgChan := make(chan events.Message)
+		eventHandlerId := whatsapp.GetMessageEvents(msgChan, toJID)
+
+		go func() {
+			defer close(msgChan)
+			defer whatsapp.WAClient.RemoveEventHandler(eventHandlerId)
+			for {
+				select {
+				case msg := <-msgChan:
+					messageDay := msg.Info.Timestamp.Truncate(24 * time.Hour)
+					if lastDate.Before(messageDay) {
+						lastDate = messageDay
+						event := socket.ServerResponse{Success: true, Message: fmt.Sprintf("\n\n%s\n", lastDate.Format("Mon Jan _2"))}
+						err := socket.WriteEvent(conn, event)
+						if err != nil {
+							cancel()
+							fmt.Println("error writing MessageReceivedEvent: ", err)
+						}
+					}
+					eventMessage := whatsapp.FormatMessage(msg)
+					event := socket.ServerResponse{Success: true, Message: eventMessage}
+					err := socket.WriteEvent(conn, event)
+					if err != nil {
+						fmt.Println("error writing MessageReceivedEvent: ", err)
+					}
+
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+
 		for {
 			err = socket.ReadEvent(reader, &clientCommand)
 			if err != nil {

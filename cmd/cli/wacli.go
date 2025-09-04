@@ -192,7 +192,11 @@ func main() {
 					for {
 						select {
 						case evt := <-eventChan:
-							fmt.Fprint(os.Stdout, evt.Message)
+							if evt.Success {
+								fmt.Fprint(os.Stdout, evt.Message)
+							} else {
+								return nil
+							}
 						case <-ctx.Done():
 							command := socket.ClientCommand{Command: "cancel"}
 							socket.WriteEvent(conn, command)
@@ -203,8 +207,7 @@ func main() {
 			},
 		},
 	}
-	ctx := context.Background()
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, os.Kill)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 
 	if err := cmd.Run(ctx, os.Args); err != nil {
 		stop()
