@@ -64,11 +64,20 @@ func HandleConnection(conn net.Conn) error {
 		}
 
 		var lastDate time.Time
+		now := time.Now()
 		for _, persistedMessage := range persistedMessages {
-			messageDay := persistedMessage.Info.Timestamp.Truncate(24 * time.Hour)
+			messageDay := time.Date(persistedMessage.Info.Timestamp.Year(), persistedMessage.Info.Timestamp.Month(), persistedMessage.Info.Timestamp.Day(), 0, 0, 0, 0, persistedMessage.Info.Timestamp.Location())
 			if lastDate.Before(messageDay) {
 				lastDate = messageDay
-				event := socket.ServerResponse{Success: true, Message: fmt.Sprintf("\n\n%s\n", lastDate.Format("Mon Jan _2"))}
+				var dateMessage string
+				if now.YearDay()-messageDay.YearDay() < 1 {
+					dateMessage = "Today"
+				} else if now.YearDay()-messageDay.YearDay() < 2 {
+					dateMessage = "Yesterday"
+				} else {
+					dateMessage = messageDay.Format("Mon Jan _2")
+				}
+				event := socket.ServerResponse{Success: true, Message: fmt.Sprintf("\n\n%s\n", dateMessage)}
 				err := socket.WriteEvent(conn, event)
 				if err != nil {
 					cancel()
@@ -100,10 +109,19 @@ func HandleConnection(conn net.Conn) error {
 			for {
 				select {
 				case msg := <-msgChan:
-					messageDay := msg.Info.Timestamp.Truncate(24 * time.Hour)
+					messageDay := time.Date(msg.Info.Timestamp.Year(), msg.Info.Timestamp.Month(), msg.Info.Timestamp.Day(), 0, 0, 0, 0, msg.Info.Timestamp.Location())
 					if lastDate.Before(messageDay) {
 						lastDate = messageDay
-						event := socket.ServerResponse{Success: true, Message: fmt.Sprintf("\n\n%s\n", lastDate.Format("Mon Jan _2"))}
+						var dateMessage string
+						if now.YearDay()-messageDay.YearDay() < 1 {
+							dateMessage = "Today"
+						} else if now.YearDay()-messageDay.YearDay() < 2 {
+							dateMessage = "Yesterday"
+						} else {
+							dateMessage = messageDay.Format("Mon Jan _2")
+						}
+
+						event := socket.ServerResponse{Success: true, Message: fmt.Sprintf("\n\n%s\n", dateMessage)}
 						err := socket.WriteEvent(conn, event)
 						if err != nil {
 							cancel()

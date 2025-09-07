@@ -20,7 +20,6 @@ func main() {
 	var filePath string
 	var caption string
 	var noWait bool
-	var showTimestamp bool
 	var follow bool
 	var tail int8
 
