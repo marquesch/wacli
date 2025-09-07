@@ -25,7 +25,7 @@ func main() {
 	connChan := make(chan net.Conn)
 
 	go whatsapp.Connect(successChan)
-	go socket.Listen(connChan, listener)
+	go socket.Accept(connChan, listener)
 
 	var retries int
 	var done bool
@@ -62,10 +62,7 @@ func main() {
 		fmt.Println("error listening to events: ", err)
 	}
 
-	for {
-		select {
-		case conn := <-connChan:
-			go wasv.HandleConnection(conn)
-		}
+	for conn := range connChan {
+		go wasv.HandleConnection(conn)
 	}
 }

@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
+	"time"
 
+	"github.com/marquesch/wasvc/internal/database"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -19,27 +20,74 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	colorGreen = "\033[0;32m"
+	colorBlue  = "\033[0;34m"
+	noColor    = "\033[0m"
+)
+
 var (
-	databasePath string
-	WAClient     *whatsmeow.Client
+	WAClient *whatsmeow.Client
 
 	imageMimeTypeRegex = regexp.MustCompile("image/.*")
 	videoMimeTypeRegex = regexp.MustCompile("video/.*")
 	audioMimeTypeRegex = regexp.MustCompile("audio/.*")
 )
 
-func init() {
-	userHomeDir, err := os.UserHomeDir()
-	if err != nil {
-		panic(err)
-	}
+func updateDBHandler(evt any) {
+	if msg, ok := evt.(*events.Message); ok {
+		var err error
+		var chatName string
+		var mediaURL string
+		authorJID := msg.Info.Sender.ToNonAD()
+		authorName := msg.Info.PushName
+		chatJID := msg.Info.Chat.ToNonAD()
+		isGroup := msg.Info.IsGroup
+		if !msg.Info.IsFromMe {
+			chatName = msg.Info.PushName
+		}
+		if isGroup {
+			groupInfo, err := WAClient.GetGroupInfo(chatJID)
+			if err != nil {
+				fmt.Println("error trying to get group info: ", err)
+				return
+			}
+			chatName = groupInfo.Name
+		}
+		whatsappMsgID := msg.Info.ID
+		msgType := msg.Info.Type
+		mediaType := msg.Info.MediaType
+		body := msg.Message.GetConversation()
+		msgTimestamp := msg.Info.Timestamp
 
-	databasePath = filepath.Join(userHomeDir, ".local", "lib", "wacli", "sqlite.db")
-	dbDir := filepath.Dir(databasePath)
+		switch mediaType {
+		case "video":
+			mediaURL = *msg.Message.VideoMessage.URL
+		case "image":
+			mediaURL = *msg.Message.ImageMessage.URL
+		case "document":
+			mediaURL = *msg.Message.DocumentMessage.URL
+		}
 
-	err = os.MkdirAll(dbDir, 0755)
-	if err != nil {
-		panic(err)
+		var authorID uint32
+		authorID, err = database.UpsertWhatsappUser(authorJID, authorName)
+		if err != nil {
+			fmt.Println("error upserting whatsapp user: ", err)
+			return
+		}
+
+		var chatID uint32
+		chatID, err = database.UpsertChat(chatJID, chatName, isGroup)
+		if err != nil {
+			fmt.Println("error upserting chat: ", err)
+			return
+		}
+
+		_, err = database.InsertMessage(chatID, authorID, whatsappMsgID, msgType, mediaType, body, mediaURL, nil, msgTimestamp)
+		if err != nil {
+			fmt.Println("error inserting message: ", err)
+			return
+		}
 	}
 }
 
@@ -47,7 +95,7 @@ func Connect(successChan chan bool) {
 	dbLog := waLog.Stdout("Database", "ERROR", true)
 
 	ctx := context.Background()
-	container, err := sqlstore.New(ctx, "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", databasePath), dbLog)
+	container, err := sqlstore.New(ctx, "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", database.WhatsmeowDatabasePath), dbLog)
 	if err != nil {
 		successChan <- false
 	}
@@ -81,18 +129,27 @@ func Connect(successChan chan bool) {
 		}
 	}
 	WAClient.SendPresence(types.PresenceAvailable)
+	WAClient.AddEventHandler(updateDBHandler)
 
 	successChan <- true
 }
 
-func ContactExists(jid types.JID) (bool, error) {
-	// #TODO: persist contacts to prevent checking on whatsapp every time
-	usersInfo, err := WAClient.GetUserInfo([]types.JID{jid})
+func WhatsappUserExists(jid types.JID) (bool, error) {
+	userExists, err := database.CheckUserInDatabase(jid)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("error checking user existence in database: %w", err)
 	}
 
-	userDevices := usersInfo[jid].Devices
+	if userExists {
+		return true, nil
+	}
+
+	userInfo, err := WAClient.GetUserInfo([]types.JID{jid})
+	if err != nil {
+		return false, fmt.Errorf("error getting user info from client: %w", err)
+	}
+
+	userDevices := userInfo[jid].Devices
 	return len(userDevices) > 0, nil
 }
 
@@ -105,7 +162,7 @@ func GetJID(phoneNumber string) types.JID {
 func SendTextMessage(phoneNumber string, text string) error {
 	toJID := GetJID(phoneNumber)
 
-	contactExists, err := ContactExists(toJID)
+	contactExists, err := WhatsappUserExists(toJID)
 	if err != nil {
 		return fmt.Errorf("error checking contact existence: %w", err)
 	}
@@ -118,9 +175,26 @@ func SendTextMessage(phoneNumber string, text string) error {
 		Conversation: proto.String(text),
 	}
 
-	_, err = WAClient.SendMessage(context.Background(), toJID, message)
+	result, err := WAClient.SendMessage(context.Background(), toJID, message)
 	if err != nil {
 		return fmt.Errorf("error sending message: %w", err)
+	}
+
+	selfID := WAClient.Store.ID
+
+	whatsappUserID, err := database.UpsertWhatsappUser(*selfID, "")
+	if err != nil {
+		return fmt.Errorf("error upserting self user: %w", err)
+	}
+
+	chatID, err := database.UpsertChat(toJID, "", false)
+	if err != nil {
+		return fmt.Errorf("error upserting chat: %w", err)
+	}
+
+	_, err = database.InsertMessage(chatID, whatsappUserID, result.ID, "text", "", text, "", nil, result.Timestamp)
+	if err != nil {
+		return fmt.Errorf("error inserting message: %w", err)
 	}
 
 	return nil
@@ -129,7 +203,7 @@ func SendTextMessage(phoneNumber string, text string) error {
 func SendMediaMessage(phoneNumber string, filePath string, caption string) error {
 	toJID := GetJID(phoneNumber)
 
-	contactExists, err := ContactExists(toJID)
+	contactExists, err := WhatsappUserExists(toJID)
 	if err != nil {
 		return fmt.Errorf("error checking contact existence: %w", err)
 	}
@@ -143,13 +217,17 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		return fmt.Errorf("failed opening file: %w", err)
 	}
 
+	var mediaType string
+	var uploadResponse whatsmeow.UploadResponse
+
 	mimeType := http.DetectContentType(fileBytes)
 
 	var message waE2E.Message
 
 	switch {
 	case imageMimeTypeRegex.MatchString(mimeType):
-		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaImage)
+		mediaType = "image"
+		uploadResponse, err = WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaImage)
 		if err != nil {
 			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
 		}
@@ -167,7 +245,8 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		}
 
 	case videoMimeTypeRegex.MatchString(mimeType):
-		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaVideo)
+		mediaType = "video"
+		uploadResponse, err = WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaVideo)
 		if err != nil {
 			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
 		}
@@ -185,7 +264,8 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		}
 
 	case audioMimeTypeRegex.MatchString(mimeType):
-		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaAudio)
+		mediaType = "audio"
+		uploadResponse, err = WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaAudio)
 		if err != nil {
 			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
 		}
@@ -201,7 +281,8 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		}
 
 	default:
-		uploadResponse, err := WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaDocument)
+		mediaType = "document"
+		uploadResponse, err = WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaDocument)
 		if err != nil {
 			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
 		}
@@ -217,22 +298,64 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		}
 	}
 
-	_, err = WAClient.SendMessage(context.Background(), toJID, &message)
+	result, err := WAClient.SendMessage(context.Background(), toJID, &message)
 	if err != nil {
 		return fmt.Errorf("error sending message: %w", err)
+	}
+
+	selfID := WAClient.Store.ID
+
+	whatsappUserID, err := database.UpsertWhatsappUser(*selfID, "")
+	if err != nil {
+		return fmt.Errorf("error upserting self user: %w", err)
+	}
+
+	chatID, err := database.UpsertChat(toJID, "", false)
+	if err != nil {
+		return fmt.Errorf("error upserting chat: %w", err)
+	}
+
+	_, err = database.InsertMessage(chatID, whatsappUserID, result.ID, "media", mediaType, "", uploadResponse.URL, nil, result.Timestamp)
+	if err != nil {
+		return fmt.Errorf("error inserting message: %w", err)
 	}
 
 	return nil
 }
 
-func ListenEvents() (chan any, error) {
-	eventsChannel := make(chan any)
-	WAClient.AddEventHandler(func(evt any) {
-		switch evt.(type) {
-		case *events.Message:
-			eventsChannel <- evt
+func GetMessageEvents(msgChan chan events.Message, toJID types.JID) uint32 {
+	eventHandlerId := WAClient.AddEventHandler(func(evt any) {
+		if msg, ok := evt.(*events.Message); ok {
+			if msg.Message == nil || msg.Info.Chat != toJID {
+				return
+			}
+
+			msgChan <- *msg
 		}
 	})
 
-	return eventsChannel, nil
+	return eventHandlerId
+}
+
+func FormatMessage(msg events.Message) string {
+	var color string
+
+	if msg.Info.IsFromMe {
+		color = colorGreen
+	} else {
+		color = colorBlue
+	}
+
+	var body string
+	switch msg.Info.Type {
+	case "text":
+		body = msg.Message.GetConversation()
+
+	case "media":
+		body = msg.Info.MediaType
+	}
+
+	eventMessage := fmt.Sprintf("\n%s%s %s%s", color, msg.Info.Timestamp.Format(time.TimeOnly), body, noColor)
+
+	return eventMessage
 }

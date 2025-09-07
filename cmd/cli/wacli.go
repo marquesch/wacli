@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
+	"os/signal"
 
 	wacli "github.com/marquesch/wasvc/internal/cli"
 	"github.com/marquesch/wasvc/internal/socket"
@@ -16,6 +20,8 @@ func main() {
 	var filePath string
 	var caption string
 	var noWait bool
+	var follow bool
+	var tail int8
 
 	cmd := &cli.Command{
 		Name:  "wacli",
@@ -50,7 +56,7 @@ func main() {
 							command := socket.ClientCommand{
 								Command:    "send",
 								Subcommand: "text",
-								Args:       []string{phoneNumber, body},
+								Args:       []any{phoneNumber, body},
 							}
 
 							if noWait {
@@ -94,7 +100,7 @@ func main() {
 							command := socket.ClientCommand{
 								Command:    "send",
 								Subcommand: "media",
-								Args:       []string{phoneNumber, filePath, caption},
+								Args:       []any{phoneNumber, filePath, caption},
 							}
 
 							response, err := wacli.SendCommand(command)
@@ -121,7 +127,7 @@ func main() {
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					command := socket.ClientCommand{
 						Command: "check",
-						Args:    []string{phoneNumber},
+						Args:    []any{phoneNumber},
 					}
 
 					response, err := wacli.SendCommand(command)
@@ -137,10 +143,89 @@ func main() {
 					return nil
 				},
 			},
+			{
+				Name: "get",
+				Arguments: []cli.Argument{
+					&cli.StringArg{
+						Name:        "phone-number",
+						Destination: &phoneNumber,
+					},
+				},
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:        "follow",
+						Destination: &follow,
+					},
+					&cli.Int8Flag{
+						Name:        "tail",
+						Destination: &tail,
+						Value:       20,
+					},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					command := socket.ClientCommand{
+						Command: "get",
+						Args:    []any{phoneNumber, tail, follow},
+					}
+
+					conn, err := net.Dial("unix", socket.SocketPath)
+					if err != nil {
+						return fmt.Errorf("error dialing server: %w", err)
+					}
+					defer conn.Close()
+
+					err = socket.WriteEvent(conn, command)
+					if err != nil {
+						return fmt.Errorf("write error: %w", err)
+					}
+
+					var response socket.ServerResponse
+
+					reader := bufio.NewReader(conn)
+					err = socket.ReadEvent(reader, &response)
+					if err != nil {
+						return fmt.Errorf("read error: %w", err)
+					}
+
+					if !response.Success {
+						return errors.New("server responded unsuccessfully")
+					}
+
+					eventChan := make(chan socket.ServerResponse)
+					go func() {
+						var evt socket.ServerResponse
+						for {
+							err := socket.ReadEvent(reader, &evt)
+							if err != nil {
+								return
+							}
+
+							eventChan <- evt
+						}
+					}()
+
+					for {
+						select {
+						case evt := <-eventChan:
+							if evt.Success {
+								fmt.Fprint(os.Stdout, evt.Message)
+							} else {
+								return nil
+							}
+						case <-ctx.Done():
+							command := socket.ClientCommand{Command: "cancel"}
+							socket.WriteEvent(conn, command)
+							return nil
+						}
+					}
+				},
+			},
 		},
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 
-	if err := cmd.Run(context.Background(), os.Args); err != nil {
+	if err := cmd.Run(ctx, os.Args); err != nil {
+		stop()
 		panic(err)
 	}
 }
