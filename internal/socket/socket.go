@@ -3,10 +3,54 @@ package socket
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 )
+
+type ISocketServer interface {
+	Start() error
+	Accept() (net.Conn, error)
+}
+
+type SocketServer struct {
+	SocketPath string
+	listener   net.Listener
+}
+
+func (ss *SocketServer) Start() error {
+	if ss.listener != nil {
+		return errors.New("server has already been started")
+	}
+
+	err := os.RemoveAll(ss.SocketPath)
+	if err != nil {
+		return fmt.Errorf("error removing old socket file: %w", err)
+	}
+
+	ss.listener, err = net.Listen("unix", ss.SocketPath)
+	if err != nil {
+		return fmt.Errorf("error listening to socket: %w", err)
+	}
+
+	return nil
+}
+
+func (ss *SocketServer) Accept() (net.Conn, error) {
+	conn, err := ss.listener.Accept()
+	if err != nil {
+		return nil, fmt.Errorf("error accepting connection: %w", err)
+	}
+
+	return conn, nil
+}
+
+type SocketService struct {
+	ISocketServer
+	log.Logger
+}
 
 const SocketPath = "/tmp/app.sock"
 

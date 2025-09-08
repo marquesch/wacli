@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/marquesch/wasvc/internal/database"
+	"github.com/marquesch/wasvc/internal/model"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -200,21 +201,21 @@ func SendTextMessage(phoneNumber string, text string) error {
 	return nil
 }
 
-func SendMediaMessage(phoneNumber string, filePath string, caption string) error {
+func SendMediaMessage(phoneNumber string, filePath string, caption *string) (*model.Message, error) {
 	toJID := GetJID(phoneNumber)
 
 	contactExists, err := WhatsappUserExists(toJID)
 	if err != nil {
-		return fmt.Errorf("error checking contact existence: %w", err)
+		return nil, fmt.Errorf("error checking contact existence: %w", err)
 	}
 
 	if !contactExists {
-		return errors.New("contact does not exist")
+		return nil, errors.New("contact does not exist")
 	}
 
 	fileBytes, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("failed opening file: %w", err)
+		return nil, fmt.Errorf("failed opening file: %w", err)
 	}
 
 	var mediaType string
@@ -222,18 +223,19 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 
 	mimeType := http.DetectContentType(fileBytes)
 
-	var message waE2E.Message
+	var whatsappMessage waE2E.Message
+	var message model.Message
 
 	switch {
 	case imageMimeTypeRegex.MatchString(mimeType):
 		mediaType = "image"
 		uploadResponse, err = WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaImage)
 		if err != nil {
-			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+			return nil, fmt.Errorf("error uploading image to whatsapp servers %w", err)
 		}
 
 		// #TODO: set thumbnail to prevent no image showing before downloading on whatsapp
-		message.ImageMessage = &waE2E.ImageMessage{
+		whatsappMessage.ImageMessage = &waE2E.ImageMessage{
 			URL:           &uploadResponse.URL,
 			DirectPath:    &uploadResponse.DirectPath,
 			MediaKey:      uploadResponse.MediaKey,
@@ -241,18 +243,18 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 			FileSHA256:    uploadResponse.FileSHA256,
 			FileEncSHA256: uploadResponse.FileEncSHA256,
 			FileLength:    proto.Uint64(uint64(len(fileBytes))),
-			Caption:       &caption,
+			Caption:       caption,
 		}
 
 	case videoMimeTypeRegex.MatchString(mimeType):
 		mediaType = "video"
 		uploadResponse, err = WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaVideo)
 		if err != nil {
-			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+			return nil, fmt.Errorf("error uploading image to whatsapp servers %w", err)
 		}
 
 		// #TODO: set thumbnail to prevent no image showing before downloading on whatsapp
-		message.VideoMessage = &waE2E.VideoMessage{
+		whatsappMessage.VideoMessage = &waE2E.VideoMessage{
 			URL:           &uploadResponse.URL,
 			DirectPath:    &uploadResponse.DirectPath,
 			MediaKey:      uploadResponse.MediaKey,
@@ -260,17 +262,17 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 			FileSHA256:    uploadResponse.FileSHA256,
 			FileEncSHA256: uploadResponse.FileEncSHA256,
 			FileLength:    proto.Uint64(uint64(len(fileBytes))),
-			Caption:       &caption,
+			Caption:       caption,
 		}
 
 	case audioMimeTypeRegex.MatchString(mimeType):
 		mediaType = "audio"
 		uploadResponse, err = WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaAudio)
 		if err != nil {
-			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+			return nil, fmt.Errorf("error uploading image to whatsapp servers %w", err)
 		}
 
-		message.AudioMessage = &waE2E.AudioMessage{
+		whatsappMessage.AudioMessage = &waE2E.AudioMessage{
 			URL:           &uploadResponse.URL,
 			DirectPath:    &uploadResponse.DirectPath,
 			MediaKey:      uploadResponse.MediaKey,
@@ -284,10 +286,10 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		mediaType = "document"
 		uploadResponse, err = WAClient.Upload(context.Background(), fileBytes, whatsmeow.MediaDocument)
 		if err != nil {
-			return fmt.Errorf("error uploading image to whatsapp servers %w", err)
+			return nil, fmt.Errorf("error uploading image to whatsapp servers %w", err)
 		}
 
-		message.DocumentMessage = &waE2E.DocumentMessage{
+		whatsappMessage.DocumentMessage = &waE2E.DocumentMessage{
 			URL:           &uploadResponse.URL,
 			DirectPath:    &uploadResponse.DirectPath,
 			MediaKey:      uploadResponse.MediaKey,
@@ -298,29 +300,29 @@ func SendMediaMessage(phoneNumber string, filePath string, caption string) error
 		}
 	}
 
-	result, err := WAClient.SendMessage(context.Background(), toJID, &message)
+	result, err := WAClient.SendMessage(context.Background(), toJID, &whatsappMessage)
 	if err != nil {
-		return fmt.Errorf("error sending message: %w", err)
+		return nil, fmt.Errorf("error sending message: %w", err)
 	}
 
 	selfID := WAClient.Store.ID
 
 	whatsappUserID, err := database.UpsertWhatsappUser(*selfID, "")
 	if err != nil {
-		return fmt.Errorf("error upserting self user: %w", err)
+		return nil, fmt.Errorf("error upserting self user: %w", err)
 	}
 
 	chatID, err := database.UpsertChat(toJID, "", false)
 	if err != nil {
-		return fmt.Errorf("error upserting chat: %w", err)
+		return nil, fmt.Errorf("error upserting chat: %w", err)
 	}
 
 	_, err = database.InsertMessage(chatID, whatsappUserID, result.ID, "media", mediaType, "", uploadResponse.URL, nil, result.Timestamp)
 	if err != nil {
-		return fmt.Errorf("error inserting message: %w", err)
+		return nil, fmt.Errorf("error inserting message: %w", err)
 	}
 
-	return nil
+	return &message, nil
 }
 
 func GetMessageEvents(msgChan chan events.Message, toJID types.JID) uint32 {
