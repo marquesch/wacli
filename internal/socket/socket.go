@@ -8,6 +8,8 @@ import (
 	"log"
 	"net"
 	"os"
+
+	"github.com/marquesch/wasvc/internal/whatsapp"
 )
 
 type ISocketServer interface {
@@ -52,6 +54,28 @@ type SocketService struct {
 	log.Logger
 }
 
+type Event interface {
+	Handle() (interface{}, error)
+}
+
+type Response interface{}
+
+func NewEvent(rawEvent string, eventType string) (Event, error) {
+	var event Event
+
+	switch eventType {
+	case "send_text_message":
+		event = &whatsapp.SendTextMessage{}
+	case "send_media_message":
+		event = &whatsapp.SendMediaMessageEvent{}
+	case "check_whatsapp_user":
+		event = &whatsapp.CheckWhatsappUserEvent{}
+	}
+
+	err := json.Unmarshal([]byte(rawEvent), &event)
+	return event, err
+}
+
 const SocketPath = "/tmp/app.sock"
 
 type ClientCommand struct {
@@ -63,10 +87,6 @@ type ClientCommand struct {
 type ServerResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"response"`
-}
-
-type Event interface {
-	ClientCommand | ServerResponse
 }
 
 func Accept(connChan chan net.Conn, listener net.Listener) {

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/marquesch/wasvc/internal/database"
-	"github.com/marquesch/wasvc/internal/model"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -34,6 +33,77 @@ var (
 	videoMimeTypeRegex = regexp.MustCompile("video/.*")
 	audioMimeTypeRegex = regexp.MustCompile("audio/.*")
 )
+
+type SendTextMessage struct {
+	PhoneNumber     string  `json:"phone_number"`
+	Body            string  `json:"body"`
+	QuotedMessageID *string `json:"quoted_message_id"`
+}
+
+func (event *SendTextMessage) Handle() (interface{}, error) {
+	toJID := GetJID(event.PhoneNumber)
+
+	contactExists, err := WhatsappUserExists(toJID)
+	if err != nil {
+		return fmt.Errorf("error checking contact existence: %w", err)
+	}
+
+	if !contactExists {
+		return errors.New("contact does not exist")
+	}
+
+	message := &waE2E.Message{
+		Conversation: proto.String(event.Body),
+	}
+
+	result, err := WAClient.SendMessage(context.Background(), toJID, message)
+	if err != nil {
+		return fmt.Errorf("error sending message: %w", err)
+	}
+
+	selfID := WAClient.Store.ID
+
+	whatsappUserID, err := database.UpsertWhatsappUser(*selfID, "")
+	if err != nil {
+		return fmt.Errorf("error upserting self user: %w", err)
+	}
+
+	chatID, err := database.UpsertChat(toJID, "", false)
+	if err != nil {
+		return fmt.Errorf("error upserting chat: %w", err)
+	}
+
+	_, err = database.InsertMessage(chatID, whatsappUserID, result.ID, "text", "", event.Body, "", nil, result.Timestamp)
+	if err != nil {
+		return fmt.Errorf("error inserting message: %w", err)
+	}
+
+	return nil
+}
+
+type SendMediaMessageEvent struct {
+	PhoneNumber string  `json:"phone_number"`
+	FilePath    string  `json:"file_path"`
+	Caption     *string `json:"caption"`
+}
+
+func (event *SendMediaMessageEvent) Handle() {
+	SendMediaMessage(event.PhoneNumber, event.FilePath, event.Caption)
+}
+
+type CheckWhatsappUserEvent struct {
+	PhoneNumber string `json:"phone_number"`
+}
+
+func (event *CheckWhatsappUserEvent) Handle() {
+	toJID := GetJID(event.PhoneNumber)
+	exists, err := WhatsappUserExists(toJID)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	fmt.Println(exists)
+}
 
 func updateDBHandler(evt any) {
 	if msg, ok := evt.(*events.Message); ok {
@@ -158,47 +228,6 @@ func GetJID(phoneNumber string) types.JID {
 	toJID, _ := types.ParseJID(fmt.Sprintf("%s@s.whatsapp.net", phoneNumber))
 
 	return toJID
-}
-
-func SendTextMessage(phoneNumber string, text string) error {
-	toJID := GetJID(phoneNumber)
-
-	contactExists, err := WhatsappUserExists(toJID)
-	if err != nil {
-		return fmt.Errorf("error checking contact existence: %w", err)
-	}
-
-	if !contactExists {
-		return errors.New("contact does not exist")
-	}
-
-	message := &waE2E.Message{
-		Conversation: proto.String(text),
-	}
-
-	result, err := WAClient.SendMessage(context.Background(), toJID, message)
-	if err != nil {
-		return fmt.Errorf("error sending message: %w", err)
-	}
-
-	selfID := WAClient.Store.ID
-
-	whatsappUserID, err := database.UpsertWhatsappUser(*selfID, "")
-	if err != nil {
-		return fmt.Errorf("error upserting self user: %w", err)
-	}
-
-	chatID, err := database.UpsertChat(toJID, "", false)
-	if err != nil {
-		return fmt.Errorf("error upserting chat: %w", err)
-	}
-
-	_, err = database.InsertMessage(chatID, whatsappUserID, result.ID, "text", "", text, "", nil, result.Timestamp)
-	if err != nil {
-		return fmt.Errorf("error inserting message: %w", err)
-	}
-
-	return nil
 }
 
 func SendMediaMessage(phoneNumber string, filePath string, caption *string) (*model.Message, error) {

@@ -178,7 +178,7 @@ func sendMessage(messageType string, args []any) error {
 		filePath, _ := args[1].(string)
 		caption, _ := args[2].(string)
 
-		err := whatsapp.SendMediaMessage(phoneNumber, filePath, caption)
+		err := whatsapp.SendMediaMessageEvent(phoneNumber, filePath, caption)
 		if err != nil {
 			return fmt.Errorf("error media image message: %w", err)
 		}
