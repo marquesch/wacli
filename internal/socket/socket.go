@@ -2,24 +2,62 @@ package socket
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net"
 	"os"
-
-	"github.com/marquesch/wasvc/internal/whatsapp"
 )
+
+const SocketPath = "/tmp/app.sock"
 
 type ISocketServer interface {
 	Start() error
 	Accept() (net.Conn, error)
 }
 
+type Connection struct {
+	Context context.Context
+	Conn    net.Conn
+	bufio.Reader
+	bufio.Writer
+}
+
+func (connection *Connection) ReadRequest() (*Request, string, error) {
+	payload, err := connection.ReadString('\n')
+	if err != nil {
+		return nil, payload, err
+	}
+
+	var req Request
+	err = json.Unmarshal([]byte(payload), &req)
+	if err != nil {
+		return nil, payload, err
+	}
+
+	return &req, payload, nil
+}
+
+func Write(conn net.Conn, data any) error {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("error marshaling json: %w", err)
+	}
+
+	_, err = conn.Write((append(payload, '\n')))
+	if err != nil {
+		return fmt.Errorf("error writing to channel: %w", err)
+	}
+
+	return nil
+}
+
 type SocketServer struct {
 	SocketPath string
 	listener   net.Listener
+	handlers   map[string]RequestHandler
 }
 
 func (ss *SocketServer) Start() error {
@@ -40,13 +78,40 @@ func (ss *SocketServer) Start() error {
 	return nil
 }
 
-func (ss *SocketServer) Accept() (net.Conn, error) {
-	conn, err := ss.listener.Accept()
+func (ss *SocketServer) Listen() {
+	for {
+		conn, err := ss.listener.Accept()
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+
+		go ss.HandleConnection(conn)
+	}
+}
+
+func (ss *SocketServer) HandleConnection(conn net.Conn) {
+	defer conn.Close()
+
+	req, payload, err := ReadRequest(conn)
 	if err != nil {
-		return nil, fmt.Errorf("error accepting connection: %w", err)
+		Write(conn, Response{Status: "error"})
+		return
 	}
 
-	return conn, nil
+	handler, exists := ss.handlers[req.Command]
+	if !exists {
+		Write(conn, Response{
+			Status:        "error",
+			TransactionID: req.TransactionID,
+			Error:         "unknown command",
+			Data:          nil,
+		})
+		return
+	}
+
+	response := handler.Handle(*req, json.RawMessage(payload))
+	Write(conn, response)
 }
 
 type SocketService struct {
@@ -54,92 +119,18 @@ type SocketService struct {
 	log.Logger
 }
 
-type Event interface {
-	Handle() (interface{}, error)
+type RequestHandler interface {
+	Handle(Request, json.RawMessage) Response
 }
 
-type Response interface{}
-
-func NewEvent(rawEvent string, eventType string) (Event, error) {
-	var event Event
-
-	switch eventType {
-	case "send_text_message":
-		event = &whatsapp.SendTextMessage{}
-	case "send_media_message":
-		event = &whatsapp.SendMediaMessageEvent{}
-	case "check_whatsapp_user":
-		event = &whatsapp.CheckWhatsappUserEvent{}
-	}
-
-	err := json.Unmarshal([]byte(rawEvent), &event)
-	return event, err
+type Request struct {
+	TransactionID string `json:"transaction_id"`
+	Command       string `json:"command"`
 }
 
-const SocketPath = "/tmp/app.sock"
-
-type ClientCommand struct {
-	Command    string `json:"command"`
-	Subcommand string `json:"subcommand"`
-	Args       []any  `json:"args"`
-}
-
-type ServerResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"response"`
-}
-
-func Accept(connChan chan net.Conn, listener net.Listener) {
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			fmt.Println("error accepting connection: ", err)
-			continue
-		}
-		connChan <- conn
-	}
-}
-
-func StartServer() (net.Listener, error) {
-	err := os.RemoveAll(SocketPath)
-	if err != nil {
-		fmt.Println("Error removing old socket:", err)
-		os.Exit(1)
-	}
-
-	listener, err := net.Listen("unix", SocketPath)
-	if err != nil {
-		fmt.Println("Listen error:", err)
-		os.Exit(1)
-	}
-
-	return listener, nil
-}
-
-func ReadEvent[T Event](reader *bufio.Reader, event *T) error {
-	buffer, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("error reading from connection: %w", err)
-	}
-
-	err = json.Unmarshal([]byte(buffer), &event)
-	if err != nil {
-		return fmt.Errorf("error unmarshaling json: %w", err)
-	}
-
-	return nil
-}
-
-func WriteEvent[T Event](conn net.Conn, event T) error {
-	message, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("error marshaling json: %w", err)
-	}
-
-	_, err = conn.Write((append(message, '\n')))
-	if err != nil {
-		return fmt.Errorf("error writing to channel: %w", err)
-	}
-
-	return nil
+type Response struct {
+	TransactionID string `json:"transaction_id"`
+	Status        string `json:"status"`
+	Data          any    `json:"data,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
