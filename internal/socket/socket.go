@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -18,11 +19,15 @@ type ISocketServer interface {
 	Accept() (net.Conn, error)
 }
 
+type Event struct {
+	Type string `json:"type"`
+	Data any    `json:"data"`
+}
+
 type Connection struct {
 	Context context.Context
-	Conn    net.Conn
+	net.Conn
 	bufio.Reader
-	bufio.Writer
 }
 
 func (connection *Connection) ReadRequest() (*Request, string, error) {
@@ -40,18 +45,26 @@ func (connection *Connection) ReadRequest() (*Request, string, error) {
 	return &req, payload, nil
 }
 
-func Write(conn net.Conn, data any) error {
+func (connection *Connection) WriteData(data any) error {
 	payload, err := json.Marshal(data)
 	if err != nil {
-		return fmt.Errorf("error marshaling json: %w", err)
+		return err
 	}
 
-	_, err = conn.Write((append(payload, '\n')))
+	_, err = connection.Write(append(payload, '\n'))
 	if err != nil {
-		return fmt.Errorf("error writing to channel: %w", err)
+		return err
 	}
 
 	return nil
+}
+
+func NewConnection(conn net.Conn) *Connection {
+	return &Connection{
+		Context: context.Background(),
+		Conn:    conn,
+		Reader:  *bufio.NewReader(conn),
+	}
 }
 
 type SocketServer struct {
@@ -91,17 +104,21 @@ func (ss *SocketServer) Listen() {
 }
 
 func (ss *SocketServer) HandleConnection(conn net.Conn) {
-	defer conn.Close()
+	connection := NewConnection(conn)
+	defer connection.Close()
 
-	req, payload, err := ReadRequest(conn)
+	req, payload, err := connection.ReadRequest()
 	if err != nil {
-		Write(conn, Response{Status: "error"})
+		if err == io.EOF {
+			return
+		}
+		connection.WriteData(Response{Status: "error"})
 		return
 	}
 
 	handler, exists := ss.handlers[req.Command]
 	if !exists {
-		Write(conn, Response{
+		connection.WriteData(Response{
 			Status:        "error",
 			TransactionID: req.TransactionID,
 			Error:         "unknown command",
@@ -110,8 +127,16 @@ func (ss *SocketServer) HandleConnection(conn net.Conn) {
 		return
 	}
 
-	response := handler.Handle(*req, json.RawMessage(payload))
-	Write(conn, response)
+	response, eventChannel := handler.Handle(*req, json.RawMessage(payload))
+	connection.WriteData(response)
+
+	if eventChannel == nil {
+		return
+	}
+
+	for event := range eventChannel {
+		connection.WriteData(event)
+	}
 }
 
 type SocketService struct {
@@ -120,7 +145,7 @@ type SocketService struct {
 }
 
 type RequestHandler interface {
-	Handle(Request, json.RawMessage) Response
+	Handle(Request, json.RawMessage) (Response, chan Event)
 }
 
 type Request struct {

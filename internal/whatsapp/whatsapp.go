@@ -49,7 +49,7 @@ type SendTextMessageRequest struct {
 
 type SendTextMessageHandler struct{}
 
-func (handler *SendTextMessageHandler) Handle(request socket.Request, rawBody json.RawMessage) socket.Response {
+func (handler *SendTextMessageHandler) Handle(request socket.Request, rawBody json.RawMessage) (socket.Response, chan socket.Event) {
 	var sendTextMessageRequest SendTextMessageRequest
 	err := json.Unmarshal([]byte(rawBody), &sendTextMessageRequest)
 	if err != nil {
@@ -57,7 +57,7 @@ func (handler *SendTextMessageHandler) Handle(request socket.Request, rawBody js
 			TransactionID: request.TransactionID,
 			Status:        "error",
 			Error:         err.Error(),
-		}
+		}, nil
 	}
 
 	message, err := sendTextMessage(sendTextMessageRequest.PhoneNumber, sendTextMessageRequest.Body, sendTextMessageRequest.QuotedMessageID)
@@ -66,14 +66,14 @@ func (handler *SendTextMessageHandler) Handle(request socket.Request, rawBody js
 			TransactionID: request.TransactionID,
 			Status:        "error",
 			Error:         err.Error(),
-		}
+		}, nil
 	}
 
 	return socket.Response{
 		TransactionID: request.TransactionID,
 		Status:        "success",
 		Data:          message,
-	}
+	}, nil
 }
 
 func sendTextMessage(recipient string, body string, quotedMessageID *string) (*model.Message, error) {
@@ -125,14 +125,40 @@ func sendTextMessage(recipient string, body string, quotedMessageID *string) (*m
 	}, nil
 }
 
-type SendMediaMessageEvent struct {
+type SendMediaMessageRequest struct {
+	socket.Request
 	PhoneNumber string  `json:"phone_number"`
 	FilePath    string  `json:"file_path"`
 	Caption     *string `json:"caption"`
 }
 
-func (event *SendMediaMessageEvent) Handle() {
-	SendMediaMessage(event.PhoneNumber, event.FilePath, event.Caption)
+type SendMediaMessageHandler struct{}
+
+func (handler *SendMediaMessageHandler) Handle(request socket.Request, rawBody json.RawMessage) (socket.Response, chan socket.Event) {
+	var sendMediaMessageRequest SendMediaMessageRequest
+	err := json.Unmarshal([]byte(rawBody), &sendMediaMessageRequest)
+	if err != nil {
+		return socket.Response{
+			TransactionID: request.TransactionID,
+			Status:        "error",
+			Error:         err.Error(),
+		}, nil
+	}
+
+	message, err := SendMediaMessage(sendMediaMessageRequest.PhoneNumber, sendMediaMessageRequest.FilePath, sendMediaMessageRequest.Caption)
+	if err != nil {
+		return socket.Response{
+			TransactionID: request.TransactionID,
+			Status:        "error",
+			Error:         err.Error(),
+		}, nil
+	}
+
+	return socket.Response{
+		TransactionID: request.TransactionID,
+		Status:        "success",
+		Data:          message,
+	}, nil
 }
 
 type CheckWhatsappUserEvent struct {
@@ -297,7 +323,7 @@ func SendMediaMessage(phoneNumber string, filePath string, caption *string) (*mo
 	mimeType := http.DetectContentType(fileBytes)
 
 	var whatsappMessage waE2E.Message
-	var message model.Message
+	var uploadURL string
 
 	switch {
 	case imageMimeTypeRegex.MatchString(mimeType):
@@ -318,6 +344,7 @@ func SendMediaMessage(phoneNumber string, filePath string, caption *string) (*mo
 			FileLength:    proto.Uint64(uint64(len(fileBytes))),
 			Caption:       caption,
 		}
+		uploadURL = uploadResponse.URL
 
 	case videoMimeTypeRegex.MatchString(mimeType):
 		mediaType = "video"
@@ -337,6 +364,7 @@ func SendMediaMessage(phoneNumber string, filePath string, caption *string) (*mo
 			FileLength:    proto.Uint64(uint64(len(fileBytes))),
 			Caption:       caption,
 		}
+		uploadURL = uploadResponse.URL
 
 	case audioMimeTypeRegex.MatchString(mimeType):
 		mediaType = "audio"
@@ -354,6 +382,7 @@ func SendMediaMessage(phoneNumber string, filePath string, caption *string) (*mo
 			FileEncSHA256: uploadResponse.FileEncSHA256,
 			FileLength:    proto.Uint64(uint64(len(fileBytes))),
 		}
+		uploadURL = uploadResponse.URL
 
 	default:
 		mediaType = "document"
@@ -371,6 +400,7 @@ func SendMediaMessage(phoneNumber string, filePath string, caption *string) (*mo
 			FileEncSHA256: uploadResponse.FileEncSHA256,
 			FileLength:    proto.Uint64(uint64(len(fileBytes))),
 		}
+		uploadURL = uploadResponse.URL
 	}
 
 	result, err := WAClient.SendMessage(context.Background(), toJID, &whatsappMessage)
@@ -393,6 +423,16 @@ func SendMediaMessage(phoneNumber string, filePath string, caption *string) (*mo
 	_, err = database.InsertMessage(chatID, whatsappUserID, result.ID, "media", mediaType, "", uploadResponse.URL, nil, result.Timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("error inserting message: %w", err)
+	}
+
+	message := model.Message{
+		From:      selfID.String(),
+		To:        phoneNumber,
+		Type:      "media",
+		MediaType: &mediaType,
+		MediaURL:  &uploadURL,
+		ID:        result.ID,
+		Timestamp: result.Timestamp,
 	}
 
 	return &message, nil
