@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 )
 
 const SocketPath = "/tmp/app.sock"
@@ -24,13 +25,18 @@ type Event struct {
 	Data any    `json:"data"`
 }
 
-type Connection struct {
-	Context context.Context
-	net.Conn
+type ClientConnection struct {
+	Context    context.Context
+	Conn       net.Conn
+	writeChann chan Response
+	mu         sync.Mutex
 	bufio.Reader
 }
 
-func (connection *Connection) ReadRequest() (*Request, string, error) {
+func (connection *ClientConnection) ReadRequest() (*Request, string, error) {
+	connection.mu.Lock()
+	defer connection.mu.Unlock()
+
 	payload, err := connection.ReadString('\n')
 	if err != nil {
 		return nil, payload, err
@@ -45,13 +51,16 @@ func (connection *Connection) ReadRequest() (*Request, string, error) {
 	return &req, payload, nil
 }
 
-func (connection *Connection) WriteData(data any) error {
+func (connection *ClientConnection) Write(data any) error {
+	connection.mu.Lock()
+	defer connection.mu.Unlock()
+
 	payload, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
 
-	_, err = connection.Write(append(payload, '\n'))
+	_, err = connection.Conn.Write(append(payload, '\n'))
 	if err != nil {
 		return err
 	}
@@ -59,11 +68,13 @@ func (connection *Connection) WriteData(data any) error {
 	return nil
 }
 
-func NewConnection(conn net.Conn) *Connection {
-	return &Connection{
-		Context: context.Background(),
-		Conn:    conn,
-		Reader:  *bufio.NewReader(conn),
+func NewConnection(conn net.Conn) *ClientConnection {
+	return &ClientConnection{
+		Context:    context.Background(),
+		Conn:       conn,
+		writeChann: make(chan Response),
+		mu:         sync.Mutex{},
+		Reader:     *bufio.NewReader(conn),
 	}
 }
 
@@ -105,20 +116,20 @@ func (ss *SocketServer) Listen() {
 
 func (ss *SocketServer) HandleConnection(conn net.Conn) {
 	connection := NewConnection(conn)
-	defer connection.Close()
+	defer connection.Conn.Close()
 
 	req, payload, err := connection.ReadRequest()
 	if err != nil {
 		if err == io.EOF {
 			return
 		}
-		connection.WriteData(Response{Status: "error"})
+		connection.Write(Response{Status: "error"})
 		return
 	}
 
 	handler, exists := ss.handlers[req.Command]
 	if !exists {
-		connection.WriteData(Response{
+		connection.Write(Response{
 			Status:        "error",
 			TransactionID: req.TransactionID,
 			Error:         "unknown command",
@@ -128,14 +139,14 @@ func (ss *SocketServer) HandleConnection(conn net.Conn) {
 	}
 
 	response, eventChannel := handler.Handle(*req, json.RawMessage(payload))
-	connection.WriteData(response)
+	connection.Write(response)
 
 	if eventChannel == nil {
 		return
 	}
 
 	for event := range eventChannel {
-		connection.WriteData(event)
+		connection.Write(event)
 	}
 }
 
